@@ -49,6 +49,7 @@ class InstanceImportTask : public InstanceTask {
                                 QMap<QString, QString>&& extra_info = {});
     virtual ~InstanceImportTask() = default;
     bool abort() override;
+    QMap<QString, QString> extraInfo() const { return m_extra_info; }  // pickle-quickplay
 
    protected:
     //! Entry point for tasks.

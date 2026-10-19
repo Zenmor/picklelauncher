@@ -37,6 +37,7 @@
 
 #include "MinecraftInstance.h"
 #include "Application.h"
+#include "InstanceList.h"  // pickle-playtime
 #include "BuildConfig.h"
 #include "Json.h"
 #include "QObjectPtr.h"
@@ -1103,6 +1104,12 @@ QString MinecraftInstance::getStatusbarDescription()
             description.append(
                 tr(", total played for %1")
                     .arg(Time::prettifyDuration(totalTimePlayed(), APPLICATION->settings()->get("ShowGameTimeWithoutDays").toBool())));
+        }
+
+        // pickle-playtime: the time of this modpack's deleted instances is remembered, show the total of the pack
+        if (const auto packTotal = APPLICATION->instances()->rememberedPackPlayTime(getManagedPackType(), getManagedPackID()); packTotal > 0) {
+            description.append(tr(", pack total played for %1")
+                                   .arg(Time::prettifyDuration(packTotal, APPLICATION->settings()->get("ShowGameTimeWithoutDays").toBool())));
         }
     }
     if (hasCrashed()) {

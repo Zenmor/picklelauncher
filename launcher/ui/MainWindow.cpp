@@ -104,7 +104,11 @@
 #include "ui/dialogs/ImportResourceDialog.h"
 #include "ui/dialogs/NewInstanceDialog.h"
 #include "ui/dialogs/NewsDialog.h"
+#include "ui/dialogs/PlaytimeDialog.h"  // pickle-playtime
 #include "ui/dialogs/ProgressDialog.h"
+#include "quickplay/QuickplayPackTask.h"
+#include "ui/dialogs/QuickplayDialog.h"
+#include "ui/SharedPackUi.h"  // pickle-sharedpack
 #include "ui/instanceview/InstanceDelegate.h"
 #include "ui/instanceview/InstanceProxyModel.h"
 #include "ui/instanceview/InstanceView.h"
@@ -248,6 +252,40 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->viewMenu->addAction(ui->instanceToolBar->toggleViewAction());
     ui->viewMenu->addAction(ui->newsToolBar->toggleViewAction());
 
+    {  // Quickplay: single shared instance with switchable version and mod preset
+        auto* quickplayAction = new QAction(tr("Quickplay"), this);
+        quickplayAction->setToolTip(tr("Play a Minecraft version with a mod preset in the shared Quickplay instance"));
+        quickplayAction->setIcon(ui->actionLaunchInstance->icon());
+        connect(quickplayAction, &QAction::triggered, this, [this] { QuickplayDialog::run(this); });
+        ui->mainToolBar->insertAction(ui->actionAddInstance, quickplayAction);
+        ui->fileMenu->insertAction(ui->actionAddInstance, quickplayAction);
+        quickplayAction->setProperty("pickleHideInInstanceMenu", true);  // pickle-sharedpack: see showInstanceContextMenu
+    }
+    {  // pickle-sharedpack: join a pack with an invite, look for new revisions of the packs we follow
+        auto* joinAction = new QAction(tr("Join Shared Pack"), this);
+        connect(joinAction, &QAction::triggered, this, [this] { SharedPackUi::join(this); });
+        ui->fileMenu->insertAction(ui->actionAddInstance, joinAction);
+        joinAction->setProperty("pickleHideInInstanceMenu", true);  // it belongs to the window, not to one instance
+        auto* publishAction = new QAction(tr("Publish Shared Pack"), this);
+        connect(publishAction, &QAction::triggered, this, [this] {
+            m_selectedInstance ? SharedPackUi::publish(this, m_selectedInstance->id())
+                               : SharedPackUi::showMessage(this, tr("Publish Shared Pack"), tr("Select an instance first."), QMessageBox::Information);
+        });
+        ui->fileMenu->insertAction(ui->actionAddInstance, publishAction);
+        // The File menu is hidden by default on Windows (Alt): this toolbar button is where Join and Publish can be found.
+        auto* sharedPacksAction = new QAction(tr("Shared Packs"), this);
+        sharedPacksAction->setToolTip(tr("Join a shared pack with an invite, or publish one"));
+        sharedPacksAction->setIcon(ui->actionCreateInstanceShortcut->icon());
+        auto* sharedPacksMenu = new QMenu(this);
+        sharedPacksMenu->addAction(joinAction);
+        sharedPacksMenu->addAction(publishAction);
+        sharedPacksAction->setMenu(sharedPacksMenu);
+        ui->mainToolBar->insertAction(ui->actionAddInstance, sharedPacksAction);
+        if (auto* sharedPacksButton = qobject_cast<QToolButton*>(ui->mainToolBar->widgetForAction(sharedPacksAction)))
+            sharedPacksButton->setPopupMode(QToolButton::InstantPopup);
+        SharedPackUi::start(this);
+    }
+
     updateThemeMenu();
     updateMainToolBar();
     // OSX magic.
@@ -324,6 +362,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
         proxymodel = new InstanceProxyModel(this);
         proxymodel->setSourceModel(APPLICATION->instances());
+        {  // Quickplay: hide the shared instance from the view (it stays in InstanceList), follows the settings live
+            const auto settings = APPLICATION->settings();
+            const auto updateHiddenInstance = [this, settings] {
+                QStringList hidden;
+                if (settings->get("QuickplayHideInstance").toBool())
+                    hidden = Quickplay::packInstanceIds() << settings->get("QuickplayInstanceId").toString();
+                proxymodel->setHiddenInstanceIds(hidden);
+            };
+            updateHiddenInstance();
+            connect(settings, &SettingsObject::SettingChanged, this, [updateHiddenInstance](const Setting& setting) {
+                if (setting.id() == "QuickplayHideInstance" || setting.id() == "QuickplayInstanceId" || setting.id() == "QuickplayPackInstances")
+                    updateHiddenInstance();
+            });
+        }
         proxymodel->sort(0);
         connect(proxymodel, &InstanceProxyModel::dataChanged, this, &MainWindow::instanceDataChanged);
 
@@ -381,6 +433,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     m_statusCenter = new QLabel(tr("Total playtime: 0s"), this);
     statusBar()->addPermanentWidget(m_statusLeft, 1);
     statusBar()->addPermanentWidget(m_statusCenter, 0);
+    // pickle-playtime: a click on the total playtime shows where the time went (eventFilter)
+    m_statusCenter->setCursor(Qt::PointingHandCursor);
+    m_statusCenter->setToolTip(tr("Show where the playtime went"));
+    m_statusCenter->installEventFilter(this);
 
     // Add "manage accounts" button, right align
     QWidget* spacer = new QWidget();
@@ -538,9 +594,11 @@ void MainWindow::showInstanceContextMenu(const QPoint& pos)
         actions = ui->fileMenu->actions();
 
         // remove the add instance action, launcher settings action and close action
-        actions.removeFirst();
+        actions.removeOne(ui->actionAddInstance);  // pickle-sharedpack: not the first entry any more (removeFirst() took Quickplay instead)
         actions.removeLast();
         actions.removeLast();
+        // pickle-sharedpack: the window-wide actions we added to the File menu (Quickplay, Join Shared Pack) do not belong to one instance
+        actions.removeIf([](QAction* action) { return action->property("pickleHideInInstanceMenu").toBool(); });
 
         actions.prepend(ui->actionChangeInstIcon);
         actions.prepend(ui->actionRenameInstance);
@@ -794,6 +852,11 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
                     break;
             }
         }
+    }
+    // pickle-playtime
+    if (obj == m_statusCenter && ev->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>(ev)->button() == Qt::LeftButton) {
+        PlaytimeDialog::run(this);
+        return true;
     }
     return QMainWindow::eventFilter(obj, ev);
 }

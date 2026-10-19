@@ -43,6 +43,9 @@
 #include <QStack>
 
 #include "BaseInstance.h"
+#include "PlaytimeBreakdown.h"  // pickle-playtime
+#include "PlaytimeLedger.h"  // pickle-playtime
+#include <optional>  // pickle-playtime
 
 class QFileSystemWatcher;
 class InstanceTask;
@@ -67,6 +70,7 @@ struct TrashHistoryItem {
     QString trashPath;
     QString groupName;
     QList<TrashShortcutItem> shortcuts;
+    std::optional<PlaytimeLedger::Record> playtime;  // pickle-playtime: what the ledger got for it, taken back on undo
 };
 
 class InstanceList : public QAbstractListModel {
@@ -146,6 +150,16 @@ class InstanceList : public QAbstractListModel {
 
     int getTotalPlayTime();
 
+    /** pickle-playtime: the time of a modpack, from its deleted instances and the ones that still exist.
+     *  0 when no time of deleted instances is remembered for it.
+     */
+    qint64 rememberedPackPlayTime(const QString& packType, const QString& packId);
+
+    /** pickle-playtime: who the time of getTotalPlayTime() belongs to, for PlaytimeBreakdown::build():
+     *  the instances that still exist and what the ledger remembers (modpacks, and deleted custom instances in one amount).
+     */
+    QList<PlaytimeBreakdown::Entry> playtimeEntries();
+
     Qt::DropActions supportedDragActions() const override;
 
     Qt::DropActions supportedDropActions() const override;
@@ -177,6 +191,12 @@ class InstanceList : public QAbstractListModel {
    private:
     int getInstIndex(BaseInstance* inst) const;
     void updateTotalPlayTime();
+    // pickle-playtime
+    PlaytimeLedger* playtimeLedger();  // loaded on first use, null while its file cannot be read (it is then left alone)
+    QString playtimeLedgerPath() const;
+    std::optional<PlaytimeLedger::Record> rememberPlaytime(const BaseInstance& inst);
+    void forgetPlaytime(const std::optional<PlaytimeLedger::Record>& record);
+    void keepPlaytime(const InstanceId& id, const QString& stagingPath);
     void suspendWatch();
     void resumeWatch();
     void add(std::vector<std::unique_ptr<BaseInstance>>& list);
@@ -191,6 +211,9 @@ class InstanceList : public QAbstractListModel {
    private:
     int m_watchLevel = 0;
     int totalPlayTime = 0;
+    PlaytimeLedger m_playtimeLedger;  // pickle-playtime
+    bool m_playtimeLedgerLoaded = false;
+    bool m_playtimeLedgerUsable = false;
     bool m_dirty = false;
     std::vector<std::unique_ptr<BaseInstance>> m_instances;
     // id -> refs

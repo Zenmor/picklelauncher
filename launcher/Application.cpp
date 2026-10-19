@@ -66,6 +66,7 @@
 #include "ui/pages/global/LauncherPage.h"
 #include "ui/pages/global/MinecraftPage.h"
 #include "ui/pages/global/ProxyPage.h"
+#include "ui/pages/global/QuickplayPage.h"
 
 #include "ui/setupwizard/AutoJavaWizardPage.h"
 #include "ui/setupwizard/JavaWizardPage.h"
@@ -160,6 +161,7 @@
 #endif
 
 #include "console/Console.h"
+#include "sharedpack/SharedPackRedact.h"  // pickle-sharedpack
 
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
@@ -228,10 +230,11 @@ static QString ansiLogFormat = QStringLiteral(
 namespace {
 
 /** This is used so that we can output to the log file in addition to the CLI. */
-void appDebugOutput(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+void appDebugOutput(QtMsgType type, const QMessageLogContext& context, const QString& rawMsg)
 {
     static std::mutex loggerMutex;
     const std::lock_guard<std::mutex> lock(loggerMutex);  // synchronized, QFile logFile is not thread-safe
+    const QString msg = SharedPack::redactForLog(rawMsg);  // pickle-sharedpack: invite tokens and keys never reach a sink
 
     if (isANSIColorConsole) {
         // ensure default is set for log file
@@ -588,6 +591,11 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
             migrated = handleDataMigration(
                 dataPath, FS::PathCombine(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), "../../multimc"), "MultiMC",
                 "multimc.cfg");
+        // pickle-rebrand: offer to bring over the data of an existing Prism Launcher install
+        if (!migrated)
+            migrated = handleDataMigration(
+                dataPath, FS::PathCombine(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), "../../PrismLauncher"),
+                "Prism Launcher", "prismlauncher.cfg");
     }
 
     {
@@ -647,6 +655,13 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
 
         // Remembered state
         m_settings->registerSetting("LastUsedGroupForNewInstance", QString());
+
+        // Quickplay: id of the shared instance, last chosen preset and Minecraft version (empty = latest release)
+        m_settings->registerSetting("QuickplayInstanceId", QString());
+        m_settings->registerSetting("QuickplayPreset", QString());
+        m_settings->registerSetting("QuickplayVersion", QString());
+        m_settings->registerSetting("QuickplayPackInstances", QString());  // preset id -> instance id of the modpack presets (JSON)
+    m_settings->registerSetting("QuickplayHideInstance", true);  // hide the Quickplay instance from the main instance view
 
         m_settings->registerSetting("MenuBarInsteadOfToolBar", false);
 
@@ -906,6 +921,7 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
             m_globalSettingsProvider->addPage<APIPage>();
             m_globalSettingsProvider->addPage<ExternalToolsPage>();
             m_globalSettingsProvider->addPage<ProxyPage>();
+            m_globalSettingsProvider->addPage<QuickplayPage>();
         }
 
         PixmapCache::setInstance(new PixmapCache(this));
@@ -1063,7 +1079,7 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
                               "\n"
                               "This likely means that a update attempt failed. Please ensure your installation is in working order before "
                               "proceeding.\n"
-                              "Check the Prism Launcher updater log at: \n"
+                              "Check the Pickle Launcher updater log at: \n"
                               "%7\n"
                               "for details on the last update attempt.\n"
                               "\n"
@@ -1099,7 +1115,7 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
                               "\n"
                               "Please ensure your installation is in working order before "
                               "proceeding.\n"
-                              "Check the Prism Launcher updater log at: \n"
+                              "Check the Pickle Launcher updater log at: \n"
                               "%1\n"
                               "for details on the last update attempt.")
                                .arg(update_log_path);
@@ -1130,7 +1146,7 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
             auto infoMsg = tr("Update succeeded\n"
                               "\n"
                               "You are now running %1 .\n"
-                              "Check the Prism Launcher updater log at: \n"
+                              "Check the Pickle Launcher updater log at: \n"
                               "%2\n"
                               "for details.")
                                .arg(BuildConfig.printableVersionString())

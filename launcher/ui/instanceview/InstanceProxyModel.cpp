@@ -18,6 +18,7 @@
 #include <BaseInstance.h>
 #include <icons/IconList.h>
 #include "Application.h"
+#include "InstanceList.h"
 #include "InstanceView.h"
 
 #include <QDebug>
@@ -28,6 +29,21 @@ InstanceProxyModel::InstanceProxyModel(QObject* parent) : QSortFilterProxyModel(
     m_naturalSort.setCaseSensitivity(Qt::CaseSensitivity::CaseInsensitive);
     // FIXME: use loaded translation as source of locale instead, hook this up to translation changes
     m_naturalSort.setLocale(QLocale::system());
+}
+
+void InstanceProxyModel::setHiddenInstanceIds(const QStringList& ids)
+{
+    if (m_hiddenInstanceIds == ids)
+        return;
+    m_hiddenInstanceIds = ids;
+    invalidateFilter();
+}
+
+bool InstanceProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
+{
+    if (m_hiddenInstanceIds.isEmpty())
+        return true;
+    return !m_hiddenInstanceIds.contains(sourceModel()->index(sourceRow, 0, sourceParent).data(InstanceList::InstanceIDRole).toString());
 }
 
 QVariant InstanceProxyModel::data(const QModelIndex& index, int role) const

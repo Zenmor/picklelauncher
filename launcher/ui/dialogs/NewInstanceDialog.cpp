@@ -74,6 +74,7 @@ NewInstanceDialog::NewInstanceDialog(const QString& initialGroup,
     : QDialog(parent), ui(new Ui::NewInstanceDialog)
 {
     ui->setupUi(this);
+    m_quickplay = extra_info.contains("pickle-quickplay");  // pickle-quickplay
 
     setWindowIcon(QIcon::fromTheme("new"));
 
@@ -171,6 +172,13 @@ QList<BasePage*> NewInstanceDialog::getPages()
 {
     QList<BasePage*> pages;
 
+    if (m_quickplay) {  // pickle-quickplay
+        if (APPLICATION->capabilities() & Application::SupportsFlame)
+            pages.append(new FlamePage(this));
+        pages.append(new ModrinthPage(this));
+        return pages;
+    }
+
     importPage = new ImportPage(this);
 
     pages.append(new CustomPage(this));
@@ -185,6 +193,11 @@ QList<BasePage*> NewInstanceDialog::getPages()
     pages.append(new TechnicPage(this));
 
     return pages;
+}
+
+QString NewInstanceDialog::selectedPageId() const  // pickle-quickplay
+{
+    return m_container->selectedPage()->id();
 }
 
 QString NewInstanceDialog::dialogTitle()

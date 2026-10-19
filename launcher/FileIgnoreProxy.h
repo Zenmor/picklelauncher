@@ -36,14 +36,28 @@
 
 #pragma once
 
+#include <QColor>
 #include <QFileInfo>
+#include <QPointer>
 #include <QSortFilterProxyModel>
+#include <functional>
 #include "SeparatorPrefixTree.h"
+
+class FolderSizeCache;
 
 class FileIgnoreProxy : public QSortFilterProxyModel {
     Q_OBJECT
 
    public:
+    /// A colour and a tooltip for a row that deserves attention (see setMarker). An empty tooltip means no mark.
+    struct Mark {
+        QColor color;
+        QString toolTip;
+    };
+    /// \a relativePath is relative to the root given to the constructor, \a size is 0 for folders, \a ticked is false when the row or a
+    /// folder above it is unticked.
+    using Marker = std::function<Mark(const QString& relativePath, bool isDir, qint64 size, bool ticked)>;
+
     FileIgnoreProxy(QString root, QObject* parent);
     // NOTE: Sadly, we have to do sorting ourselves.
     bool lessThan(const QModelIndex& left, const QModelIndex& right) const;
@@ -60,6 +74,14 @@ class FileIgnoreProxy : public QSortFilterProxyModel {
     bool shouldExpand(QModelIndex index);
 
     void setBlockedPaths(QStringList paths);
+
+    /// Opt-in, off by default (the export dialogs behave as before): the size column shows the size of folders from \a cache ("..." until
+    /// it is counted) and sorts folders by it. The cache is only ever READ here, never started or waited for: whoever enables this starts
+    /// it for the same root as this proxy, and cancels it when the tree goes away. nullptr turns it off again.
+    void setFolderSizes(FolderSizeCache* cache);
+
+    /// Opt-in, off by default: \a marker is asked about every row the view draws, so it must be cheap and must not touch the disk.
+    void setMarker(Marker marker);
 
     inline const SeparatorPrefixTree<'/'>& blockedPaths() const { return m_blocked; }
     inline SeparatorPrefixTree<'/'>& blockedPaths() { return m_blocked; }
@@ -83,9 +105,13 @@ class FileIgnoreProxy : public QSortFilterProxyModel {
     bool ignoreFile(QFileInfo file) const;
 
    private:
+    void folderSizesChanged();
+
     const QString m_root;
     SeparatorPrefixTree<'/'> m_blocked;
     QStringList m_ignoreFiles;
     QStringList m_ignoreFilesSuffixes;
     SeparatorPrefixTree<'/'> m_ignoreFilePaths;
+    QPointer<FolderSizeCache> m_folderSizes;
+    Marker m_marker;
 };

@@ -26,6 +26,7 @@
 #include <compare>
 #include <cstdint>
 #include <memory>
+#include "modplatform/PackGallery.h"  // pickle-descriptions
 
 class QIODevice;
 
@@ -149,6 +150,8 @@ struct IndexedVersion {
 
 struct ExtraPackData {
     QList<DonationData> donate;
+
+    QList<GalleryImage> gallery;  // pickle-descriptions
 
     QString issuesUrl;
     QString sourceUrl;

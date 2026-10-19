@@ -57,6 +57,8 @@ void FlameMod::loadURLs(ModPlatform::IndexedPack& pack, QJsonObject& obj)
     if (pack.extraData.wikiUrl.endsWith('/'))
         pack.extraData.wikiUrl.chop(1);
 
+    pack.extraData.gallery = ModPlatform::parseCurseForgeScreenshots(obj["screenshots"].toArray());  // pickle-descriptions
+
     if (!pack.extraData.body.isEmpty())
         pack.extraDataLoaded = true;
 }

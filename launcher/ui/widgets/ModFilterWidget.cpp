@@ -248,6 +248,8 @@ void ModFilterWidget::prepareBasicFilter()
         ui->rift->setChecked(loaders & ModPlatform::Rift);
         m_filter->loaders = loaders;
         auto def = m_instance->getPackProfile()->getComponentVersion("net.minecraft");
+        if (def.isEmpty())  // pickle-quickplay: a preset picker has no Minecraft version and must not filter by one
+            return;
         m_filter->versions.emplace_back(def);
         ui->versions->setCheckedItems({ def });
         ui->version->setCurrentIndex(ui->version->findText(def));

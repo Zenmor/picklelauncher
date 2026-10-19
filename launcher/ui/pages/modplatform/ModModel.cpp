@@ -5,6 +5,7 @@
 #include "ModModel.h"
 
 #include "minecraft/MinecraftInstance.h"
+#include "quickplay/QuickplayModPicker.h"  // pickle-quickplay
 #include "minecraft/PackProfile.h"
 #include "minecraft/mod/ModFolderModel.h"
 #include "modplatform/ModIndex.h"
@@ -85,6 +86,9 @@ void ModModel::searchWithTerm(const QString& term, unsigned int sort, bool filte
 
 bool ModModel::isPackInstalled(ModPlatform::IndexedPack::Ptr pack) const
 {
+    // pickle-quickplay: a preset picker knows its mods by project, there are no files
+    if (const auto* picker = dynamic_cast<const Quickplay::PickInstance*>(&m_base_instance))
+        return picker->hasMod(pack->provider, pack->addonId.toString());
     auto allMods = static_cast<MinecraftInstance&>(m_base_instance).loaderModList()->allMods();
     return std::any_of(allMods.cbegin(), allMods.cend(), [pack](Mod* mod) {
         if (auto meta = mod->metadata(); meta)

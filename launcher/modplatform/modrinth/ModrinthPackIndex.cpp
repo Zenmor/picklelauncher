@@ -110,7 +110,10 @@ void Modrinth::loadExtraPackData(ModPlatform::IndexedPack& pack, QJsonObject& ob
 
     pack.extraData.status = obj["status"].toString();
 
-    pack.extraData.body = obj["body"].toString().remove("<br>");
+    // pickle-descriptions: keep the <br> tags; removing them merged the lines of the Credits block into one paragraph
+    pack.extraData.body = obj["body"].toString();
+
+    pack.extraData.gallery = ModPlatform::parseModrinthGallery(obj["gallery"].toArray());  // pickle-descriptions
 
     pack.extraDataLoaded = true;
 }

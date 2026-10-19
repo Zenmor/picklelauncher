@@ -154,6 +154,7 @@ void InstanceCopyTask::copyFinished()
     inst->regenerateUuid();
     if (!m_keepPlaytime) {
         inst->resetTimePlayed();
+        inst->settings()->reset("firstLaunchTime");  // pickle-playtime: a copy without the playtime has not been played
     }
     if (m_useLinks) {
         inst->addLinkedInstanceId(m_origInstance->id());

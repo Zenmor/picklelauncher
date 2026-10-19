@@ -297,7 +297,7 @@ void ModrinthPage::updateUI()
 
     text += markdownToHTML(m_current->extraData.body.toUtf8());
 
-    m_ui->packDescription->setHtml(StringUtils::htmlListPatch(text + m_current->description));
+    m_ui->packDescription->setHtml(StringUtils::htmlListPatch(text + m_current->description + ModPlatform::galleryHtml(m_current->extraData.gallery)));  // pickle-descriptions
     m_ui->packDescription->flush();
 }
 

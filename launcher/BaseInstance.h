@@ -180,6 +180,8 @@ class BaseInstance : public QObject {
      * Stored in milliseconds since epoch.
      */
     qint64 lastLaunch() const;
+    /// pickle-playtime: when the game was started for the first time, in milliseconds since epoch. 0: not recorded.
+    qint64 firstLaunch() const;
     /// Sets the last launched time to 'val' milliseconds since epoch
     void setLastLaunch(qint64 val = QDateTime::currentMSecsSinceEpoch());
 

@@ -1,0 +1,21 @@
+name = "voidrelay"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+DEFAULT_QUOTA_BYTES = "3221225472"
+GLOBAL_STORAGE_LIMIT_BYTES = "10737418240"
+# Counted publisher requests per minute (begin, prepare pages, revision PUT, commit; blob uploads are not counted).
+# A 5,000-file publish needs about 53.
+PUBLISHER_REQUESTS_PER_MINUTE = "120"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "voidrelay-db"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "voidpack-bucket"

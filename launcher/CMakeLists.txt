@@ -491,6 +491,8 @@ set(META_SOURCES
 set(API_SOURCES
     modplatform/ModIndex.h
     modplatform/ModIndex.cpp
+    modplatform/PackGallery.h  # pickle-descriptions
+    modplatform/PackGallery.cpp
     modplatform/ResourceType.h
     modplatform/ResourceType.cpp
 
@@ -626,6 +628,8 @@ set(PRISMUPDATER_SOURCES
     Version.cpp
     Markdown.h
     Markdown.cpp
+    MarkdownTables.h  # pickle-descriptions
+    MarkdownTables.cpp
 
     # Zip
     MMCZip.h
@@ -759,6 +763,86 @@ endif()
 
 ################################ COMPILE ################################
 
+# Quickplay: single shared instance with switchable Minecraft version and mod presets
+set(QUICKPLAY_SOURCES
+    quickplay/QuickplayPreset.h
+    quickplay/QuickplayPreset.cpp
+    quickplay/QuickplayLoader.h
+    quickplay/QuickplayLoader.cpp
+    quickplay/QuickplayResolver.h
+    quickplay/QuickplayResolver.cpp
+    quickplay/QuickplayModInstaller.h
+    quickplay/QuickplayModInstaller.cpp
+    quickplay/QuickplayPrepareTask.h
+    quickplay/QuickplayPrepareTask.cpp
+    quickplay/QuickplayModPicker.h
+    quickplay/QuickplayModPicker.cpp
+    quickplay/QuickplayPack.h
+    quickplay/QuickplayPack.cpp
+    quickplay/QuickplayPackTask.h
+    quickplay/QuickplayPackTask.cpp
+    sharedpack/SharedPackManifest.h  # pickle-sharedpack
+    sharedpack/SharedPackManifest.cpp
+    sharedpack/SharedPackPath.h
+    sharedpack/SharedPackPath.cpp
+    sharedpack/SharedPackState.h
+    sharedpack/SharedPackState.cpp
+    sharedpack/SharedPackPlan.h
+    sharedpack/SharedPackPlan.cpp
+    sharedpack/SharedPackSigV4.h
+    sharedpack/SharedPackSigV4.cpp
+    sharedpack/SharedPackRedact.h
+    sharedpack/SharedPackRedact.cpp
+    sharedpack/SharedPackInvite.h
+    sharedpack/SharedPackInvite.cpp
+    sharedpack/SharedPackDisk.h
+    sharedpack/SharedPackDisk.cpp
+    sharedpack/SharedPackApply.h
+    sharedpack/SharedPackApply.cpp
+    sharedpack/SharedPackTransfer.h
+    sharedpack/SharedPackTransfer.cpp
+    sharedpack/SharedPackLink.h
+    sharedpack/SharedPackLink.cpp
+    sharedpack/SharedPackNet.h
+    sharedpack/SharedPackNet.cpp
+    sharedpack/SharedPackTasks.h
+    sharedpack/SharedPackTasks.cpp
+    sharedpack/SharedPackCheck.h
+    sharedpack/SharedPackCheck.cpp
+    sharedpack/SharedPackService.h
+    sharedpack/SharedPackService.cpp
+    sharedpack/SharedPackBuild.h
+    sharedpack/SharedPackBuild.cpp
+    sharedpack/SharedPackPublishPlan.h
+    sharedpack/SharedPackPublishPlan.cpp
+    sharedpack/SharedPackOwner.h
+    sharedpack/SharedPackOwner.cpp
+    sharedpack/SharedPackCredentials.h
+    sharedpack/SharedPackCredentials.cpp
+    sharedpack/SharedPackTarget.h
+    sharedpack/SharedPackTarget.cpp
+    sharedpack/SharedPackS3Target.h
+    sharedpack/SharedPackS3Target.cpp
+    sharedpack/SharedPackRelayTarget.h
+    sharedpack/SharedPackRelayTarget.cpp
+    sharedpack/SharedPackPublisher.h
+    sharedpack/SharedPackPublisher.cpp
+    sharedpack/SharedPackScan.h
+    sharedpack/SharedPackScan.cpp
+    sharedpack/SharedPackSelection.h
+    sharedpack/SharedPackSelection.cpp
+    FolderSizeCache.h  # background folder sizes for file trees (QtCore only, so the tests can link it)
+    FolderSizeCache.cpp
+    sharedpack/SharedPackOwnerSession.h
+    sharedpack/SharedPackOwnerSession.cpp
+    ui/dialogs/QuickplayDialog.h
+    ui/dialogs/QuickplayDialog.cpp
+    ui/dialogs/PlaytimeDialog.h  # pickle-playtime
+    ui/dialogs/PlaytimeDialog.cpp
+    ui/pages/global/QuickplayPage.h
+    ui/pages/global/QuickplayPage.cpp
+)
+
 set(LOGIC_SOURCES
     ${CORE_SOURCES}
     ${NET_SOURCES}
@@ -781,6 +865,7 @@ set(LOGIC_SOURCES
     ${PACKWIZ_SOURCES}
     ${TECHNIC_SOURCES}
     ${ATLAUNCHER_SOURCES}
+    ${QUICKPLAY_SOURCES}
 )
 
 if(APPLE AND Launcher_ENABLE_UPDATER)
@@ -812,6 +897,16 @@ SET(LAUNCHER_SOURCES
     VersionProxyModel.cpp
     Markdown.h
     Markdown.cpp
+    MarkdownTables.h  # pickle-descriptions
+    MarkdownTables.cpp
+    PlaytimeLedger.h  # pickle-playtime
+    PlaytimeLedger.cpp
+    PlaytimeBreakdown.h
+    PlaytimeBreakdown.cpp
+    PlaytimeDetails.h
+    PlaytimeDetails.cpp
+    PlaytimeDetailsCollector.h
+    PlaytimeDetailsCollector.cpp
 
     # Super secret!
     KonamiCode.h
@@ -909,6 +1004,14 @@ SET(LAUNCHER_SOURCES
     ui/pages/instance/VersionPage.h
     ui/pages/instance/ManagedPackPage.cpp
     ui/pages/instance/ManagedPackPage.h
+    ui/pages/instance/SharedPackPage.h  # pickle-sharedpack
+    ui/pages/instance/SharedPackPage.cpp
+    ui/dialogs/JoinSharedPackDialog.h
+    ui/dialogs/JoinSharedPackDialog.cpp
+    ui/dialogs/PublishSharedPackDialog.h
+    ui/dialogs/PublishSharedPackDialog.cpp
+    ui/SharedPackUi.h
+    ui/SharedPackUi.cpp
     ui/pages/instance/DataPackPage.h
     ui/pages/instance/DataPackPage.cpp
     ui/pages/instance/TexturePackPage.h
@@ -1140,6 +1243,8 @@ SET(LAUNCHER_SOURCES
     ui/widgets/PageContainer_p.h
     ui/widgets/ProjectDescriptionPage.h
     ui/widgets/ProjectDescriptionPage.cpp
+    ui/widgets/ProjectDescriptionUtils.h
+    ui/widgets/ProjectDescriptionUtils.cpp
     ui/widgets/VariableSizedImageObject.h
     ui/widgets/VariableSizedImageObject.cpp
     ui/widgets/ProjectItem.h

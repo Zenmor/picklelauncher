@@ -36,11 +36,13 @@
 
 #include "FileIgnoreProxy.h"
 
+#include <QBrush>
 #include <QDebug>
 #include <QFileSystemModel>
 #include <QSortFilterProxyModel>
 #include <QStack>
 #include "FileSystem.h"
+#include "FolderSizeCache.h"
 #include "SeparatorPrefixTree.h"
 #include "StringUtils.h"
 
@@ -69,6 +71,22 @@ bool FileIgnoreProxy::lessThan(const QModelIndex& left, const QModelIndex& right
         return StringUtils::naturalCompare(leftFileInfo.fileName(), rightFileInfo.fileName(), Qt::CaseInsensitive) < 0;
     }
     if (sortColumn() == 1) {
+        if (m_folderSizes) {
+            // Folders have a size too now: sort them by it (only reads the cache), and files by theirs, as before.
+            const auto keyOf = [this](const QFileInfo& info) {
+                FolderSizes::SortKey key;
+                key.name = info.fileName();
+                if (info.isDir()) {
+                    const auto counted = m_folderSizes->size(relPath(info.absoluteFilePath()));
+                    key.known = counted.has_value();
+                    key.size = counted.value_or(0);
+                } else {
+                    key.size = info.size();
+                }
+                return key;
+            };
+            return FolderSizes::lessBySize(keyOf(leftFileInfo), keyOf(rightFileInfo), asc);
+        }
         auto leftSize = leftFileInfo.size();
         auto rightSize = rightFileInfo.size();
         if ((leftSize == rightSize) || (leftFileInfo.isDir() && rightFileInfo.isDir())) {
@@ -110,6 +128,24 @@ QVariant FileIgnoreProxy::data(const QModelIndex& index, int role) const
             return QVariant(Qt::PartiallyChecked);
         } else {
             return QVariant(Qt::Checked);
+        }
+    }
+
+    // The two opt-in additions below only ever READ what is already known (the folder size cache, the model's cached file size): nothing
+    // here walks a folder or touches the disk, data() is called for every row the view paints.
+    if (m_folderSizes && index.column() == 1 && role == Qt::DisplayRole) {
+        QFileSystemModel* fsm = qobject_cast<QFileSystemModel*>(sourceModel());
+        if (fsm && fsm->isDir(sourceIndex))
+            return FolderSizes::displayText(m_folderSizes->size(relPath(fsm->filePath(sourceIndex))), m_folderSizes->finished());
+    }
+    if (m_marker && index.column() <= 1 && (role == Qt::ToolTipRole || role == Qt::ForegroundRole)) {
+        QFileSystemModel* fsm = qobject_cast<QFileSystemModel*>(sourceModel());
+        if (fsm) {
+            const QString path = relPath(fsm->filePath(sourceIndex));
+            const bool isDir = fsm->isDir(sourceIndex);
+            const Mark mark = m_marker(path, isDir, isDir ? 0 : fsm->size(sourceIndex), !m_blocked.covers(path));
+            if (!mark.toolTip.isEmpty())
+                return role == Qt::ToolTipRole ? QVariant(mark.toolTip) : QVariant(QBrush(mark.color));
         }
     }
 
@@ -218,6 +254,29 @@ bool FileIgnoreProxy::setFilterState(QModelIndex index, Qt::CheckState state)
         // siblings and unrelated nodes are ignored
     }
     return true;
+}
+
+void FileIgnoreProxy::setFolderSizes(FolderSizeCache* cache)
+{
+    if (m_folderSizes)
+        disconnect(m_folderSizes, nullptr, this, nullptr);
+    m_folderSizes = cache;
+    if (cache)
+        connect(cache, &FolderSizeCache::changed, this, &FileIgnoreProxy::folderSizesChanged);
+    folderSizesChanged();
+}
+
+void FileIgnoreProxy::setMarker(Marker marker)
+{
+    m_marker = std::move(marker);
+    invalidate();
+}
+
+void FileIgnoreProxy::folderSizesChanged()
+{
+    // New numbers for rows that are already on screen, and possibly a new order. invalidate() keeps expanded folders and the selection
+    // (persistent indexes). It re-filters and re-sorts, which is cheap for a game folder, and the cache only reports a few times a second.
+    invalidate();
 }
 
 bool FileIgnoreProxy::shouldExpand(QModelIndex index)

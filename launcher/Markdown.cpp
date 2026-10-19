@@ -17,10 +17,12 @@
  */
 
 #include "Markdown.h"
+#include "MarkdownTables.h"  // pickle-descriptions
 
 QString markdownToHTML(const QString& markdown)
 {
-    const QByteArray markdownData = markdown.toUtf8();
+    // pickle-descriptions: cmark has no GFM tables, convert them to HTML first
+    const QByteArray markdownData = MarkdownTables::convert(markdown).toUtf8();
     char* buffer = cmark_markdown_to_html(markdownData.constData(), markdownData.length(), CMARK_OPT_NOBREAKS | CMARK_OPT_UNSAFE);
 
     QString htmlStr(buffer);

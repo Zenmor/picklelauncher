@@ -349,6 +349,7 @@ void InstanceImportTask::processMultiMC()
 
     // reset time played on import... because packs.
     instance.resetTimePlayed();
+    instance.settings()->reset("firstLaunchTime");  // pickle-playtime: the exporter's first launch is not ours
 
     // UUID is carried over on export, but this is a distinct instance, so give it its own
     instance.regenerateUuid();

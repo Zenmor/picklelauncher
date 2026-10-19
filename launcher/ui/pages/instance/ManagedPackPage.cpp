@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 #include "ManagedPackPage.h"
+#include "SharedPackPage.h"  // pickle-sharedpack
 #include <QDesktopServices>
 #include <QLineEdit>
 #include <QUrl>
@@ -85,6 +86,9 @@ ManagedPackPage* ManagedPackPage::createPage(BaseInstance* inst, QString type, Q
         return new ModrinthManagedPackPage(inst, nullptr, parent);
     if (type == "flame" && (APPLICATION->capabilities() & Application::SupportsFlame))
         return new FlameManagedPackPage(inst, nullptr, parent);
+
+    if (type == "pickleshared")  // pickle-sharedpack
+        return new SharedPackPage(inst, parent);
 
     return new GenericManagedPackPage(inst, nullptr, parent);
 }

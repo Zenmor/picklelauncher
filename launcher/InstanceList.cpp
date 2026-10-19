@@ -48,6 +48,9 @@
 #include <QTimer>
 #include <QUuid>
 
+#include "Application.h"  // pickle-playtime
+#include <algorithm>  // pickle-playtime
+#include <limits>  // pickle-playtime
 #include "BaseInstance.h"
 #include "ExponentialSeries.h"
 #include "FileSystem.h"
@@ -343,13 +346,18 @@ bool InstanceList::trashInstance(const InstanceId& id)
         saveGroupList();
     }
 
+    // pickle-playtime: its time is written to the ledger before the instance is gone, and taken back if it cannot be trashed
+    const auto playtime = rememberPlaytime(*inst);
+
     if (!FS::trash(inst->instanceRoot(), &trashedLoc)) {
         qWarning() << "Trash of instance" << id << "has not been completely successful...";
+        forgetPlaytime(playtime);  // pickle-playtime
         return false;
     }
 
     qDebug() << "Instance" << id << "has been trashed by the launcher.";
     m_trashHistory.push({ id, inst->instanceRoot(), trashedLoc, cachedGroupId });
+    m_trashHistory.top().playtime = playtime;  // pickle-playtime
 
     // Also trash all of its shortcuts; we remove the shortcuts if trash fails since it is invalid anyway
     for (const auto& [name, filePath, target] : inst->shortcuts()) {
@@ -395,6 +403,7 @@ bool InstanceList::undoTrashInstance()
         return false;
     }
     qDebug() << "Moving" << top.trashPath << "back to" << top.path;
+    forgetPlaytime(top.playtime);  // pickle-playtime: the instance counts for itself again, not twice
 
     bool ok = true;
     for (const auto& [data, trashPath] : top.shortcuts) {
@@ -435,9 +444,13 @@ void InstanceList::deleteInstance(const InstanceId& id)
         saveGroupList();
     }
 
+    // pickle-playtime: its time is written to the ledger before the instance is gone, and taken back if it cannot be deleted
+    const auto playtime = rememberPlaytime(*inst);
+
     qDebug() << "Will delete instance" << id;
     if (!FS::deletePath(inst->instanceRoot())) {
         qWarning() << "Deletion of instance" << id << "has not been completely successful...";
+        forgetPlaytime(playtime);  // pickle-playtime
         return;
     }
 
@@ -561,8 +574,122 @@ void InstanceList::updateTotalPlayTime()
 {
     totalPlayTime = 0;
     for (const auto& itr : m_instances) {
+        // pickle-playtime: a deleted instance stays in the list until the next rescan, its time is in the ledger now
+        if (!QFileInfo::exists(itr->instanceRoot()))
+            continue;
         totalPlayTime += itr->totalTimePlayed();
     }
+
+    // pickle-playtime: the time of deleted instances
+    if (const auto* ledger = playtimeLedger())
+        totalPlayTime = static_cast<int>(std::min<qint64>(totalPlayTime + ledger->totalSeconds(), (std::numeric_limits<int>::max)()));
+}
+
+// pickle-playtime: everything below, up to saveNow()
+QString InstanceList::playtimeLedgerPath() const
+{
+    return FS::PathCombine(APPLICATION->dataRoot(), "playtime-ledger.json");
+}
+
+PlaytimeLedger* InstanceList::playtimeLedger()
+{
+    if (!m_playtimeLedgerLoaded) {
+        m_playtimeLedgerLoaded = true;
+        const auto result = m_playtimeLedger.load(playtimeLedgerPath());
+        m_playtimeLedgerUsable = result != PlaytimeLedger::LoadResult::Unusable;
+        if (!m_playtimeLedgerUsable)
+            qWarning() << "The playtime ledger" << playtimeLedgerPath() << "cannot be read. It is left as it is and not used.";
+        else if (result == PlaytimeLedger::LoadResult::FromBackup)
+            qWarning() << "The playtime ledger" << playtimeLedgerPath() << "was damaged, its backup is used.";
+    }
+    return m_playtimeLedgerUsable ? &m_playtimeLedger : nullptr;
+}
+
+std::optional<PlaytimeLedger::Record> InstanceList::rememberPlaytime(const BaseInstance& inst)
+{
+    auto* ledger = playtimeLedger();
+    const auto seconds = inst.totalTimePlayed();
+    if (!ledger || seconds <= 0)
+        return std::nullopt;
+
+    const PlaytimeLedger::Record record{ PlaytimeLedger::packKey(inst.getManagedPackType(), inst.getManagedPackID()), seconds };
+    ledger->add(record.packKey, record.seconds, inst.getManagedPackName());
+    if (!ledger->save(playtimeLedgerPath())) {
+        qWarning() << "Could not save the playtime ledger, the playtime of" << inst.id() << "is not remembered.";
+        ledger->subtract(record.packKey, record.seconds);
+        return std::nullopt;
+    }
+    return record;
+}
+
+void InstanceList::forgetPlaytime(const std::optional<PlaytimeLedger::Record>& record)
+{
+    auto* ledger = playtimeLedger();
+    if (!record || !ledger)
+        return;
+
+    ledger->subtract(record->packKey, record->seconds);
+    if (!ledger->save(playtimeLedgerPath()))
+        qWarning() << "Could not save the playtime ledger after an instance came back or could not be removed.";
+}
+qint64 InstanceList::rememberedPackPlayTime(const QString& packType, const QString& packId)
+{
+    const auto key = PlaytimeLedger::packKey(packType, packId);
+    const auto* ledger = playtimeLedger();
+    if (key.isEmpty() || !ledger || ledger->packSeconds(key) <= 0)
+        return 0;
+
+    qint64 total = ledger->packSeconds(key);
+    for (const auto& inst : m_instances) {
+        if (inst->getManagedPackType() == packType && inst->getManagedPackID() == packId && QFileInfo::exists(inst->instanceRoot()))
+            total += inst->totalTimePlayed();
+    }
+    return total;
+}
+
+QList<PlaytimeBreakdown::Entry> InstanceList::playtimeEntries()
+{
+    QList<PlaytimeBreakdown::Entry> entries;
+    for (const auto& inst : m_instances) {
+        // the same instances as updateTotalPlayTime()
+        if (!QFileInfo::exists(inst->instanceRoot()))
+            continue;
+        const auto key = PlaytimeLedger::packKey(inst->getManagedPackType(), inst->getManagedPackID());
+        if (key.isEmpty()) {
+            entries.append({ QStringLiteral("instance:") + inst->id(), inst->name(), inst->totalTimePlayed() });
+        } else {
+            const auto packName = inst->getManagedPackName();
+            entries.append({ key, packName.isEmpty() ? inst->name() : packName, inst->totalTimePlayed() });
+        }
+    }
+
+    if (const auto* ledger = playtimeLedger()) {
+        for (const auto& pack : ledger->packEntries())
+            entries.append({ pack.key, pack.name, pack.seconds });
+        entries.append({ QString(PlaytimeBreakdown::DeletedCustomKey), {}, ledger->anonymousSeconds() });
+    }
+    return entries;
+}
+
+// An update of a modpack replaces the instance.cfg of the instance by the staged one, which starts at zero.
+// The playtime is written into the staged file first, so an update keeps it.
+void InstanceList::keepPlaytime(const InstanceId& id, const QString& stagingPath)
+{
+    auto inst = getInstanceById(id);
+    if (!inst)
+        return;
+
+    const QString file = FS::PathCombine(stagingPath, "instance.cfg");
+    INIFile cfg;
+    if (!cfg.loadFile(file))
+        return;
+
+    // the settings, not totalTimePlayed(): that one also counts a session that is running right now
+    for (const char* key : { "totalTimePlayed", "lastTimePlayed", "lastLaunchTime" })
+        cfg.set(key, inst->settings()->get(key));
+    cfg.set("firstLaunchTime", inst->settings()->get("firstLaunchTime"));  // pickle-playtime: an update must not erase it
+    if (!cfg.saveFile(file))
+        qWarning() << "Could not keep the playtime of" << id << "in the update.";
 }
 
 void InstanceList::saveNow()
@@ -1049,6 +1176,7 @@ bool InstanceList::commitStagedInstance(const QString& path,
         QString destination = FS::PathCombine(m_instDir, instID);
 
         if (should_override) {
+            keepPlaytime(instID, path);  // pickle-playtime
             if (!FS::overrideFolder(destination, path)) {
                 qWarning() << "Failed to override" << path << "to" << destination;
                 return false;

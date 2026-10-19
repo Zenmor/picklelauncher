@@ -24,11 +24,16 @@ class InstanceProxyModel : public QSortFilterProxyModel {
    public:
     InstanceProxyModel(QObject* parent = 0);
 
+    /// Hides the instance with this id from the view. The source model is not touched. An empty id hides nothing.
+    void setHiddenInstanceIds(const QStringList& ids);
+
    protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
     QVariant data(const QModelIndex& index, int role) const override;
     bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
     bool subSortLessThan(const QModelIndex& left, const QModelIndex& right) const;
 
    private:
     QCollator m_naturalSort;
+    QStringList m_hiddenInstanceIds;
 };

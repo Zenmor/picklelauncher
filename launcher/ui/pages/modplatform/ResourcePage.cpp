@@ -273,7 +273,8 @@ void ResourcePage::updateUi(const QModelIndex& index)
     text += "<hr>";
 
     m_ui->packDescription->setHtml(StringUtils::htmlListPatch(
-        text + (currentPack->extraData.body.isEmpty() ? currentPack->description : markdownToHTML(currentPack->extraData.body))));
+        text + (currentPack->extraData.body.isEmpty() ? currentPack->description : markdownToHTML(currentPack->extraData.body)) +
+        ModPlatform::galleryHtml(currentPack->extraData.gallery)));  // pickle-descriptions
     m_ui->packDescription->flush();
 }
 

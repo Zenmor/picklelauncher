@@ -19,6 +19,9 @@ class ProjectDescriptionPage final : public QTextBrowser {
 
     void setMetaEntry(QString entry);
 
+    /** Like QTextBrowser::setHtml, but makes CurseForge's relative outgoing links work (pickle-descriptions). */
+    void setHtml(const QString& html);
+
    public slots:
     /** Flushes the current processing happening in the page.
      *
@@ -27,6 +30,12 @@ class ProjectDescriptionPage final : public QTextBrowser {
      */
     void flush();
 
+   protected:
+    // pickle-descriptions: animated images only play while the page is shown
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
    private:
     shared_qobject_ptr<VariableSizedImageObject> m_image_text_object;
+    bool m_flushDone = false;  // pickle-descriptions: setHtml flushed already, the flush() that follows it is absorbed
 };

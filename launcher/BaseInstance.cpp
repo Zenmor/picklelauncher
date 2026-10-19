@@ -83,6 +83,7 @@ BaseInstance::BaseInstance(SettingsObject* globalSettings, std::unique_ptr<Setti
     m_settings->registerSetting("notes", "");
 
     m_settings->registerSetting("lastLaunchTime", 0);
+    m_settings->registerSetting("firstLaunchTime", 0);  // pickle-playtime
     m_settings->registerSetting("totalTimePlayed", 0);
     if (m_settings->get("totalTimePlayed").toLongLong() < 0)
         m_settings->reset("totalTimePlayed");
@@ -309,6 +310,9 @@ void BaseInstance::setMinecraftRunning(bool running)
     if (running) {
         m_timeStarted = QDateTime::currentDateTime();
         setLastLaunch(m_timeStarted.toMSecsSinceEpoch());
+        // pickle-playtime: recorded once, by the first start of the game
+        if (firstLaunch() == 0)
+            m_settings->set("firstLaunchTime", m_timeStarted.toMSecsSinceEpoch());
     } else {
         QDateTime timeEnded = QDateTime::currentDateTime();
 
@@ -375,6 +379,12 @@ bool BaseInstance::reloadSettings()
 qint64 BaseInstance::lastLaunch() const
 {
     return m_settings->get("lastLaunchTime").value<qint64>();
+}
+
+// pickle-playtime
+qint64 BaseInstance::firstLaunch() const
+{
+    return m_settings->get("firstLaunchTime").value<qint64>();
 }
 
 void BaseInstance::setLastLaunch(qint64 val)

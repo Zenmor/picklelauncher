@@ -19,12 +19,17 @@
 #include "VariableSizedImageObject.h"
 
 #include <QAbstractTextDocumentLayout>
+#include <QBuffer>
 #include <QDebug>
+#include <QFile>
+#include <QFileInfo>
 #include <QPainter>
 #include <QTextObject>
+#include <algorithm>
 #include <memory>
 
 #include "Application.h"
+#include "ProjectDescriptionUtils.h"  // pickle-descriptions
 
 #include "net/ApiDownload.h"
 #include "net/NetJob.h"
@@ -37,8 +42,6 @@ QSizeF VariableSizedImageObject::intrinsicSize(QTextDocument* doc, int posInDocu
 
     auto image = qvariant_cast<QImage>(format.property(ImageData));
     auto size = image.size();
-    if (size.isEmpty())  // can't resize an empty image
-        return { size };
 
     // calculate the new image size based on the properties
     int width = 0;
@@ -51,6 +54,15 @@ QSizeF VariableSizedImageObject::intrinsicSize(QTextDocument* doc, int posInDocu
     if (heigthVar.isValid()) {
         height = heigthVar.toInt();
     }
+
+    if (size.isEmpty()) {
+        // pickle-descriptions: before the image is loaded, keep the room the page asks for (both width and height),
+        // so the text below does not jump when the image arrives. Otherwise we can't size an empty image.
+        if (width <= 0 || height <= 0)
+            return { size };
+        size = { width, height };
+    }
+
     if (width != 0 && height != 0) {
         size.setWidth(width);
         size.setHeight(height);
@@ -80,7 +92,7 @@ void VariableSizedImageObject::drawObject(QPainter* painter,
 {
     if (!format.hasProperty(ImageData)) {
         QUrl image_url{ qvariant_cast<QString>(format.property(QTextFormat::ImageName)) };
-        if (m_fetching_images.contains(image_url) || image_url.isEmpty())
+        if (image_url.isEmpty())
             return;
 
         auto meta = std::make_shared<ImageMetadata>();
@@ -96,11 +108,23 @@ void VariableSizedImageObject::drawObject(QPainter* painter,
             meta->height = heigthVar.toInt();
         }
 
-        loadImage(doc, meta);
+        // pickle-descriptions: normally preload() has started this already, then this only joins it
+        requestImage(doc, meta);
         return;
     }
 
     auto image = qvariant_cast<QImage>(format.property(ImageData));
+
+    // pickle-descriptions: an animated image shows the frame of its movie, the stored image is only its first frame
+    if (auto animation = m_animations.find(qvariant_cast<QString>(format.property(QTextFormat::ImageName)));
+        animation != m_animations.end() && animation->movie) {
+        animation->painted = true;
+        if (!m_suspended && animation->movie->state() == QMovie::Paused)
+            animation->movie->setPaused(false);  // it scrolled back into view
+
+        if (const auto frame = animation->movie->currentImage(); !frame.isNull())
+            image = frame;
+    }
 
     painter->setRenderHint(QPainter::RenderHint::SmoothPixmapTransform);
     painter->drawImage(rect, image);
@@ -108,7 +132,92 @@ void VariableSizedImageObject::drawObject(QPainter* painter,
 
 void VariableSizedImageObject::flush()
 {
-    m_fetching_images.clear();
+    // pickle-descriptions: a callback of an older generation must not edit the next document, even for the same address
+    ++m_generation;
+    for (const auto& pending : std::as_const(m_pending)) {
+        if (pending.job && pending.job->isRunning())
+            pending.job->abort();
+    }
+    m_pending.clear();
+
+    // the animations belong to the old content too
+    for (const auto& animation : std::as_const(m_animations)) {
+        if (animation.movie)
+            animation.movie->deleteLater();
+    }
+    m_animations.clear();
+}
+
+void VariableSizedImageObject::setSuspended(bool suspended)
+{
+    m_suspended = suspended;
+    if (!suspended)
+        return;  // a movie goes on when it is painted again
+
+    for (const auto& animation : std::as_const(m_animations)) {
+        if (animation.movie && animation.movie->state() == QMovie::Running)
+            animation.movie->setPaused(true);
+    }
+}
+
+void VariableSizedImageObject::startAnimation(const QString& key, const QString& path)
+{
+    if (m_animations.contains(key) || QFileInfo(path).size() > ProjectDescription::kMaxAnimationBytes ||
+        !ProjectDescription::isAnimatedImage(path))
+        return;
+
+    // The movie reads from memory: a movie on the file would keep the cache entry open, and the meta cache could
+    // not replace it (Windows) while the description is shown.
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+
+    auto* movie = new QMovie(this);
+    auto* buffer = new QBuffer(movie);
+    buffer->setData(file.readAll());
+    movie->setDevice(buffer);
+    if (!movie->isValid() || movie->frameCount() < 2) {
+        delete movie;
+        return;
+    }
+
+    m_animations.insert(key, { movie, true, {} });
+    connect(movie, &QMovie::frameChanged, this, [this, key] {
+        auto animation = m_animations.find(key);
+        if (animation == m_animations.end() || !animation->movie)
+            return;
+
+        // Nobody has painted the last frame: it is off screen or the page is hidden, so stop decoding.
+        // drawObject starts it again when the image comes back into view.
+        if (!animation->painted || m_suspended) {
+            animation->movie->setPaused(true);
+            return;
+        }
+
+        // GIFs with tiny delays would repaint the whole view far more often than anyone can see
+        constexpr qint64 kMinRepaintMs = 30;
+        if (animation->sinceRepaint.isValid() && !animation->sinceRepaint.hasExpired(kMinRepaintMs))
+            return;
+        animation->sinceRepaint.restart();
+        animation->painted = false;
+        emit animationFrame();
+    });
+    movie->start();
+}
+
+void VariableSizedImageObject::preload(QTextDocument* doc)
+{
+    for (const auto& ref : ProjectDescription::imageRefs(doc)) {
+        if (ref.format.hasProperty(ImageData))
+            continue;
+
+        auto meta = std::make_shared<ImageMetadata>();
+        meta->posInDocument = ref.position;
+        meta->url = ref.url;
+        meta->width = ref.width;
+        meta->height = ref.height;
+        requestImage(doc, meta);
+    }
 }
 
 void VariableSizedImageObject::parseImage(QTextDocument* doc, std::shared_ptr<ImageMetadata> meta)
@@ -117,7 +226,8 @@ void VariableSizedImageObject::parseImage(QTextDocument* doc, std::shared_ptr<Im
     cursor.setPosition(meta->posInDocument);
     cursor.setKeepPositionOnInsert(true);
 
-    auto image_char_format = cursor.charFormat();
+    // pickle-descriptions: cursor.charFormat() would be the character before the image and lose its link
+    auto image_char_format = ProjectDescription::charFormatAt(doc, meta->posInDocument);
 
     image_char_format.setObjectType(QTextFormat::ImageObject);
     image_char_format.setProperty(ImageData, meta->image);
@@ -131,10 +241,25 @@ void VariableSizedImageObject::parseImage(QTextDocument* doc, std::shared_ptr<Im
     cursor.insertText(QString(QChar::ObjectReplacementCharacter), image_char_format);
 }
 
+void VariableSizedImageObject::requestImage(QTextDocument* doc, std::shared_ptr<ImageMetadata> meta)
+{
+    if (meta->url.isEmpty())
+        return;
+
+    // pickle-descriptions: the same address used several times is downloaded once, every place is filled when it arrives
+    if (auto pending = m_pending.find(meta->url); pending != m_pending.end()) {
+        const bool known = std::any_of(pending->targets.cbegin(), pending->targets.cend(),
+                                       [&meta](const auto& target) { return target->posInDocument == meta->posInDocument; });
+        if (!known)
+            pending->targets.append(meta);
+        return;
+    }
+
+    loadImage(doc, meta);
+}
+
 void VariableSizedImageObject::loadImage(QTextDocument* doc, std::shared_ptr<ImageMetadata> meta)
 {
-    m_fetching_images.insert(meta->url);
-
     MetaEntryPtr entry = APPLICATION->metacache()->resolveEntry(
         m_meta_entry,
         QString("images/%1").arg(QString(QCryptographicHash::hash(meta->url.toEncoded(), QCryptographicHash::Algorithm::Sha1).toHex())));
@@ -143,38 +268,45 @@ void VariableSizedImageObject::loadImage(QTextDocument* doc, std::shared_ptr<Ima
     job->setAskRetry(false);
     job->addNetAction(Net::ApiDownload::makeCached(meta->url, entry));
 
-    auto full_entry_path = entry->getFullPath();
-    auto source_url = meta->url;
-    auto loadImage = [this, doc, full_entry_path, source_url, meta](const QImage& image) {
+    // registered before the job starts: the callbacks below look the address up
+    m_pending.insert(meta->url, { job, { meta } });
+
+    const auto full_entry_path = entry->getFullPath();
+    const auto source_url = meta->url;
+    const auto generation = m_generation;
+    auto loadImage = [this, doc, generation, source_url](const QImage& image, const QString& animatedPath) {
+        // If we flushed, don't proceed.
+        if (generation != m_generation)
+            return;
+
+        const auto targets = m_pending.take(source_url).targets;
+        if (targets.isEmpty())
+            return;
+
         doc->addResource(QTextDocument::ImageResource, source_url, image);
 
-        meta->image = image;
-        parseImage(doc, meta);
+        for (const auto& target : targets) {
+            target->image = image;
+            parseImage(doc, target);
+        }
+
+        // pickle-descriptions: a GIF or animated WebP plays instead of showing its first frame
+        if (!animatedPath.isEmpty())
+            startAnimation(source_url.toDisplayString(), animatedPath);
 
         // This size hack is needed to prevent the content from being laid out in an area smaller
         // than the total width available (weird).
         auto size = doc->pageSize();
         doc->adjustSize();
         doc->setPageSize(size);
-
-        m_fetching_images.remove(source_url);
     };
-    connect(job, &NetJob::succeeded, this, [this, full_entry_path, source_url, loadImage] {
+    connect(job, &NetJob::succeeded, this, [full_entry_path, loadImage] {
         qDebug() << "Loaded resource at:" << full_entry_path;
-        // If we flushed, don't proceed.
-        if (!m_fetching_images.contains(source_url))
-            return;
-
-        QImage image(full_entry_path);
-        loadImage(image);
+        loadImage(QImage(full_entry_path), full_entry_path);
     });
-    connect(job, &NetJob::failed, this, [this, full_entry_path, source_url, loadImage](QString reason) {
+    connect(job, &NetJob::failed, this, [full_entry_path, loadImage](QString reason) {
         qWarning() << "Failed resource at:" << full_entry_path << "because:" << reason;
-        // If we flushed, don't proceed.
-        if (!m_fetching_images.contains(source_url))
-            return;
-
-        loadImage(QImage());
+        loadImage(QImage(), QString());
     });
     connect(job, &NetJob::finished, job, &NetJob::deleteLater);
 

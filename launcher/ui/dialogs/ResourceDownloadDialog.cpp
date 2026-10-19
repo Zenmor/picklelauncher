@@ -38,6 +38,7 @@
 #include "ui/dialogs/CustomMessageBox.h"
 #include "ui/dialogs/ProgressDialog.h"
 #include "ui/dialogs/ReviewMessageBox.h"
+#include "quickplay/QuickplayModPicker.h"  // pickle-quickplay
 
 #include "ui/pages/modplatform/ResourcePage.h"
 
@@ -323,6 +324,9 @@ QList<BasePage*> ModDownloadDialog::getPages()
 
 GetModDependenciesTask::Ptr ModDownloadDialog::getModDependenciesTask()
 {
+    // pickle-quickplay: a preset has no Minecraft version to look dependencies up for, the resolver adds them at install time
+    if (dynamic_cast<Quickplay::PickInstance*>(m_instance))
+        return nullptr;
     if (!APPLICATION->settings()->get("ModDependenciesDisabled").toBool()) {  // dependencies
         if (auto* model = dynamic_cast<ModFolderModel*>(getBaseModel()); model) {
             QList<std::shared_ptr<GetModDependenciesTask::PackDependency>> selectedVers;

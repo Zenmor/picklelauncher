@@ -67,6 +67,7 @@ class NewInstanceDialog : public QDialog, public BasePageProvider {
     void setSuggestedIcon(const QString& key);
 
     InstanceTask* extractTask();
+    QString selectedPageId() const;  // pickle-quickplay
 
     QString dialogTitle() override;
     QList<BasePage*> getPages() override;
@@ -91,6 +92,7 @@ class NewInstanceDialog : public QDialog, public BasePageProvider {
 
     QString InstIconKey;
     ImportPage* importPage = nullptr;
+    bool m_quickplay = false;  // pickle-quickplay: only the modpack pages of Modrinth and CurseForge
     std::unique_ptr<InstanceTask> creationTask;
 
     bool importIcon = false;
