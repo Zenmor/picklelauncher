@@ -10,7 +10,6 @@ endif()
 
 # pickle-rebrand: CommonName also names the data folder, so it stays PrismLauncher and existing data is found.
 set(Launcher_CommonName "PrismLauncher")
-set(Launcher_InstallName "PickleLauncher")  # pickle-rebrand: installer folder / registry identity, must differ from Prism
 set(Launcher_DisplayName "Pickle Launcher")
 set(Launcher_AppID "org.prismlauncher.PrismLauncher")
 set(Launcher_Domain "prismlauncher.org")
