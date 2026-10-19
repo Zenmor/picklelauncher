@@ -591,11 +591,6 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
             migrated = handleDataMigration(
                 dataPath, FS::PathCombine(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), "../../multimc"), "MultiMC",
                 "multimc.cfg");
-        // pickle-rebrand: offer to bring over the data of an existing Prism Launcher install
-        if (!migrated)
-            migrated = handleDataMigration(
-                dataPath, FS::PathCombine(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), "../../PrismLauncher"),
-                "Prism Launcher", "prismlauncher.cfg");
     }
 
     {
