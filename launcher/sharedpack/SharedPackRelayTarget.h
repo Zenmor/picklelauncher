@@ -41,6 +41,15 @@ class RelayTarget : public PublishTarget {
     /// Must be called (by Publisher::publish) before prepare().
     void setJob(const PublishJob& job);
 
+    using BlobRequests = QList<QPair<QString, qint64>>;  ///< (sha512, size)
+
+    /// The blobs the Worker has to store: the files without a public URL (members fetch Modrinth files from the CDN).
+    static BlobRequests blobRequests(const PublishJob& job);
+
+    /// The JSON body of POST /publish/begin, including the blob list the Worker stores with the session.
+    /// Static so a test can check it without a network.
+    static QByteArray beginPayload(const HostConfig& host, const PublishJob& job);
+
     /// Calls /publish/begin and pages through bounded missing-blob batches. Always
     /// calls done() from the event loop.
     void prepare(bool dryRun, std::function<void(bool ok, const QString& error)> done) override;
@@ -72,7 +81,7 @@ class RelayTarget : public PublishTarget {
 
     // Results filled in by prepare():
     QMap<QString, QUrl> m_uploadUrls;  ///< sha512 → authenticated Worker upload URL
-    QList<QPair<QString, qint64>> m_blobRequests;
+    BlobRequests m_blobRequests;
     QSet<QString> m_missingBlobs;
     QSet<QString> m_presentBlobs;
     QUrl m_revisionUploadUrl;           ///< Worker upload URL for revisions/<n>.json

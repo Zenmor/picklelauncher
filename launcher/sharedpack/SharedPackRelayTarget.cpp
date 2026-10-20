@@ -39,6 +39,11 @@ QString describeWorkerStatus(int status, const QByteArray& body)
     return QStringLiteral("the server returned HTTP %1").arg(status);
 }
 
+QJsonObject blobJson(const RelayTarget::BlobRequests::value_type& blob)
+{
+    return QJsonObject{ { QStringLiteral("sha512"), blob.first }, { QStringLiteral("size"), static_cast<double>(blob.second) } };
+}
+
 }  // namespace
 
 RelayTarget::RelayTarget(HostConfig host, QObject* parent)
@@ -62,6 +67,35 @@ void RelayTarget::setJob(const PublishJob& job)
     m_sessionId.clear();
 }
 
+RelayTarget::BlobRequests RelayTarget::blobRequests(const PublishJob& job)
+{
+    BlobRequests requests;
+    for (const auto& file : job.manifest.files) {
+        if (file.sha512.isEmpty() || !file.urls.isEmpty())
+            continue;
+        requests.append({ file.sha512, file.size });
+    }
+    return requests;
+}
+
+QByteArray RelayTarget::beginPayload(const HostConfig& host, const PublishJob& job)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("readToken"), job.token);
+    if (!host.prefix.isEmpty())
+        body.insert(QStringLiteral("prefix"), host.prefix);
+    body.insert(QStringLiteral("packId"), job.manifest.packId);
+    body.insert(QStringLiteral("revision"), job.manifest.revision);
+    body.insert(QStringLiteral("packSecret"), host.packSecret);
+    body.insert(QStringLiteral("manifestBytes"), static_cast<double>(manifestToJson(job.manifest).size()));
+    // The Worker stores the blob list with the session and pages through it in /publish/prepare.
+    QJsonArray blobs;
+    for (const auto& blob : blobRequests(job))
+        blobs.append(blobJson(blob));
+    body.insert(QStringLiteral("blobs"), blobs);
+    return QJsonDocument(body).toJson(QJsonDocument::Compact);
+}
+
 // ---------------------------------------------------------------- prepare (phase 1)
 
 void RelayTarget::prepare(bool dryRun, std::function<void(bool ok, const QString& error)> done)
@@ -72,12 +106,7 @@ void RelayTarget::prepare(bool dryRun, std::function<void(bool ok, const QString
     }
 
     // List only files that need an owned R2 blob; Modrinth URLs are fetched directly by members.
-    m_blobRequests.clear();
-    for (const auto& file : m_job->manifest.files) {
-        if (file.sha512.isEmpty() || !file.urls.isEmpty())
-            continue;
-        m_blobRequests.append({ file.sha512, file.size });
-    }
+    m_blobRequests = blobRequests(*m_job);
 
     // The Worker refuses a file above this size with a vague "Invalid blob batch": name the files here, before anything is sent.
     constexpr qint64 MaxServerFileBytes = 100'000'000;
@@ -97,10 +126,6 @@ void RelayTarget::prepare(bool dryRun, std::function<void(bool ok, const QString
         return;
     }
 
-    QJsonObject body;
-    body.insert(QStringLiteral("readToken"), m_job->token);
-    if (!m_host.prefix.isEmpty())
-        body.insert(QStringLiteral("prefix"), m_host.prefix);
     if (dryRun) {
         m_dryRun = true;
         m_presentBlobs.clear();
@@ -109,13 +134,7 @@ void RelayTarget::prepare(bool dryRun, std::function<void(bool ok, const QString
     }
 
     m_dryRun = false;
-    body.insert(QStringLiteral("packId"), m_job->manifest.packId);
-    body.insert(QStringLiteral("revision"), m_job->manifest.revision);
-    body.insert(QStringLiteral("packSecret"), m_host.packSecret);
-    const QByteArray manifestBytes = manifestToJson(m_job->manifest);
-    body.insert(QStringLiteral("manifestBytes"), static_cast<double>(manifestBytes.size()));
-
-    const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    const QByteArray payload = beginPayload(m_host, *m_job);
     workerPost(QStringLiteral("/publish/begin"), payload, [this, done](const QByteArray& resp, int status) {
         if (m_aborted) {
             const QJsonDocument doc = QJsonDocument::fromJson(resp);
@@ -170,10 +189,8 @@ void RelayTarget::checkBlobPage(int offset, std::function<void(bool ok, const QS
     }
     QJsonArray blobs;
     const int end = static_cast<int>(std::min<qsizetype>(offset + 100, m_blobRequests.size()));
-    for (int i = offset; i < end; ++i) {
-        const auto& [sha512, size] = m_blobRequests.at(i);
-        blobs.append(QJsonObject{ { QStringLiteral("sha512"), sha512 }, { QStringLiteral("size"), static_cast<double>(size) } });
-    }
+    for (int i = offset; i < end; ++i)
+        blobs.append(blobJson(m_blobRequests.at(i)));
     const QByteArray payload = QJsonDocument(QJsonObject{
         { QStringLiteral("readToken"), m_job->token },
         { QStringLiteral("prefix"), m_host.prefix },

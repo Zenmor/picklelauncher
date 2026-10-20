@@ -7,6 +7,9 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTest>
 #include <QTimer>
 #include <functional>
@@ -833,6 +836,57 @@ class SharedPackTargetTest : public QObject {
         QVERIFY2(error.contains(QStringLiteral("mods/huge.jar (100 MB)")), qPrintable(error));
         QVERIFY(!error.contains(QStringLiteral("small.jar")));
         QVERIFY(!error.contains(QStringLiteral("public.jar")));
+    }
+
+    // The Worker answers /publish/begin with "Invalid blob list" when the body has no blobs array.
+    void relayBeginSendsTheBlobsItMustStore()
+    {
+        HostConfig host;
+        host.kind = HostConfig::Kind::Relay;
+        host.packSecret = QStringLiteral("0123456789abcdef0123456789abcdef");
+        host.prefix = QStringLiteral("shared");
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_begin_01");
+        job.manifest.revision = 3;
+        job.manifest.files = {
+            File{ "mods/own.jar", 10, sha512Of("own"), {} },
+            // a Modrinth file is fetched from the CDN and never uploaded, so it is not in the blob list
+            File{ "mods/public.jar", 20, sha512Of("public"), { QStringLiteral("https://cdn.modrinth.com/data/AABBCCDD/versions/11223344/p.jar") } },
+            File{ "config/own.toml", 30, sha512Of("config"), {} },
+        };
+
+        const QJsonObject body = QJsonDocument::fromJson(RelayTarget::beginPayload(host, job)).object();
+        QCOMPARE(body.value(QStringLiteral("packId")).toString(), QStringLiteral("Pack_begin_01"));
+        QCOMPARE(body.value(QStringLiteral("revision")).toInt(), 3);
+        QCOMPARE(body.value(QStringLiteral("prefix")).toString(), QStringLiteral("shared"));
+        QVERIFY(body.value(QStringLiteral("manifestBytes")).toInt() > 0);
+
+        QVERIFY2(body.value(QStringLiteral("blobs")).isArray(), "begin must carry the blob list");
+        const QJsonArray blobs = body.value(QStringLiteral("blobs")).toArray();
+        QCOMPARE(blobs.size(), 2);
+        QCOMPARE(blobs.at(0).toObject().value(QStringLiteral("sha512")).toString(), sha512Of("own"));
+        QCOMPARE(blobs.at(0).toObject().value(QStringLiteral("size")).toInt(), 10);
+        QCOMPARE(blobs.at(1).toObject().value(QStringLiteral("sha512")).toString(), sha512Of("config"));
+        QCOMPARE(blobs.at(1).toObject().value(QStringLiteral("size")).toInt(), 30);
+    }
+
+    // The Worker accepts up to Limits::MaxFiles blobs in one begin, and the request must stay under its 2 MiB body cap.
+    void relayBeginForAMaximumPackFitsTheRequestLimit()
+    {
+        HostConfig host;
+        host.kind = HostConfig::Kind::Relay;
+        host.packSecret = QStringLiteral("0123456789abcdef0123456789abcdef");
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_begin_02");
+        job.manifest.revision = 1;
+        for (int i = 0; i < Limits::MaxFiles; ++i)
+            job.manifest.files.append(File{ QStringLiteral("mods/m%1.jar").arg(i), 100'000'000, sha512Of(QByteArray::number(i)), {} });
+
+        const QByteArray payload = RelayTarget::beginPayload(host, job);
+        QCOMPARE(QJsonDocument::fromJson(payload).object().value(QStringLiteral("blobs")).toArray().size(), Limits::MaxFiles);
+        QVERIFY2(payload.size() < 2 * 1024 * 1024, qPrintable(QString::number(payload.size())));
     }
 };
 

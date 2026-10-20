@@ -892,6 +892,28 @@ test("preparation pages through 250 blobs in order, skips stored blobs, replays 
   assert.equal((await commit()).status, 409);
 });
 
+test("a 10,000-blob first publish prepares fully and its session row fits D1's 2 MB row limit; 10,001 is refused", async () => {
+  const { env, db } = createTestEnv();
+  const packId = "Pack_big_01";
+  const readToken = "read-token-bigabcdefghijklmnopqrstuv";
+  await addPublisher(db, PUBLISHER_TOKEN);
+  const blobs = Array.from({ length: 10_000 }, (_, index) => ({ sha512: sha(`big-${index}`), size: 1 }));
+  const { response } = await beginWith(env, packId, readToken, blobs);
+  assert.equal(response.status, 200);
+  const sessionId = (await response.json() as Record<string, string>).sessionId;
+  for (let offset = 0; offset < blobs.length; offset += 100) {
+    assert.equal((await prepareAt(env, sessionId, offset)).status, 200);
+  }
+  const row = db.publish_sessions.get(sessionId)!;
+  assert.equal((JSON.parse(row.missing_blobs_json) as unknown[]).length, blobs.length); // nothing was stored yet
+  // D1 refuses a row above 2,000,000 bytes, and a first publish has every blob missing.
+  const rowBytes = new TextEncoder().encode(row.blob_sizes_json + row.missing_blobs_json).byteLength;
+  assert.ok(rowBytes < 2_000_000, `session row text is ${rowBytes} bytes`);
+
+  const tooMany = [...blobs, { sha512: sha("big-extra"), size: 1 }];
+  assert.equal((await beginWith(env, "Pack_big_02", readToken, tooMany)).response.status, 400);
+});
+
 test("a commit interrupted by an R2 error can be retried with the same session and then replays idempotently", async () => {
   const { env, db, bucket } = createTestEnv();
   const packId = "Pack_commit_01";

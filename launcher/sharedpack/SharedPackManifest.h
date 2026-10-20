@@ -17,7 +17,7 @@ constexpr int FormatVersion = 1;
 namespace Limits {
 constexpr qint64 MaxManifestBytes = 8 * 1024 * 1024;
 constexpr qint64 MaxLatestBytes = 4 * 1024;
-constexpr int MaxFiles = 5000;
+constexpr int MaxFiles = 10000;
 constexpr int MaxReleased = 1000;
 constexpr qint64 MaxFileSize = 512LL * 1024 * 1024;
 constexpr qint64 MaxTotalSize = 4LL * 1024 * 1024 * 1024;

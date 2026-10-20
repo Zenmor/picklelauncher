@@ -25,7 +25,8 @@ const DEFAULT_PUBLISHER_QUOTA = 3 * 1024 * 1024 * 1024;
 const DEFAULT_GLOBAL_QUOTA = 10 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 100_000_000;
 const DEFAULT_MAX_PACKS = 5;
-const MAX_FILES = 5000;
+// The session row stores the blob list (about 160 bytes per blob) and D1 caps a row at 2 MB; begin carries the same list under MAX_REQUEST_BYTES.
+const MAX_FILES = 10_000;
 const BLOB_PAGE_SIZE = 100;
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 const SESSION_TTL_MS = 15 * 60 * 1000;
@@ -249,14 +250,11 @@ async function recoverStaleCommits(env: Env, now: number): Promise<void> {
         WHERE session_id = ? AND status = 'committing' AND status_updated_at <= ?
       `).bind(now, session.session_id, now - COMMIT_STALE_MS).run();
       if (changes(claimed) !== 1) continue;
-      const parsed: unknown = JSON.parse(session.missing_blobs_json);
-      if (!Array.isArray(parsed)) continue;
+      const blobs = parseSessionBlobs(session);
+      const missing = blobs && readMissingBlobs(session, blobs);
+      if (!missing) continue;
       const keys = [buildRevisionKey(pack.storage_token, session.revision, pack.prefix)];
-      for (const item of parsed) {
-        const blob = item as Record<string, unknown>;
-        if (typeof blob?.sha512 !== "string" || !isValidSha512(blob.sha512)) throw new Error("invalid blob entry");
-        keys.push(buildBlobKey(blob.sha512, pack.storage_token, pack.prefix));
-      }
+      for (const blob of missing) keys.push(buildBlobKey(blob.sha512, pack.storage_token, pack.prefix));
       for (let i = 0; i < keys.length; i += 1000) await env.BUCKET.delete(keys.slice(i, i + 1000));
       await env.DB.batch([
         env.DB.prepare("DELETE FROM publish_sessions WHERE session_id = ? AND status = 'cleaning'").bind(session.session_id),
@@ -294,22 +292,9 @@ async function cleanupExpiredSessions(env: Env, now: number): Promise<void> {
       .bind(session.pack_id).first<Pack>();
     // A damaged row is left for an operator; it must never fail other publishers' begin requests.
     if (!pack) continue;
-    let missingBlobs: BlobUploadRequest[];
-    try {
-      const parsed: unknown = JSON.parse(session.missing_blobs_json);
-      if (!Array.isArray(parsed)) throw new Error("invalid blob list");
-      missingBlobs = parsed.map((item): BlobUploadRequest => {
-        if (typeof item !== "object" || item === null) throw new Error("invalid blob entry");
-        const blob = item as Record<string, unknown>;
-        if (typeof blob.sha512 !== "string" || !isValidSha512(blob.sha512) ||
-            typeof blob.size !== "number" || !Number.isSafeInteger(blob.size) || blob.size < 0) {
-          throw new Error("invalid blob entry");
-        }
-        return { sha512: blob.sha512, size: blob.size };
-      });
-    } catch {
-      continue;
-    }
+    const sessionBlobs = parseSessionBlobs(session);
+    const missingBlobs = sessionBlobs && readMissingBlobs(session, sessionBlobs);
+    if (!missingBlobs) continue;
     const keys = [
       buildRevisionKey(pack.storage_token, session.revision, pack.prefix),
       ...missingBlobs.map((blob) => buildBlobKey(blob.sha512, pack.storage_token, pack.prefix)),
@@ -514,6 +499,22 @@ async function beginPublish(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ sessionId, blobCount: blobRequests.length, expiresAt });
 }
 
+// missing_blobs_json holds indexes into blob_sizes_json, not copies of the blobs: copies would double the row size.
+function parseMissingIndexes(session: PublisherSession, blobCount: number): number[] | null {
+  try {
+    const value: unknown = JSON.parse(session.missing_blobs_json);
+    if (!Array.isArray(value) || value.length > blobCount) return null;
+    return value.every((index) => Number.isInteger(index) && index >= 0 && index < blobCount) ? (value as number[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readMissingBlobs(session: PublisherSession, blobs: BlobUploadRequest[]): BlobUploadRequest[] | null {
+  const indexes = parseMissingIndexes(session, blobs.length);
+  return indexes ? indexes.map((index) => blobs[index]) : null;
+}
+
 function parseSessionBlobs(session: PublisherSession): BlobUploadRequest[] | null {
   try {
     const value: unknown = JSON.parse(session.blob_sizes_json);
@@ -557,14 +558,8 @@ async function prepareBlobPage(request: Request, env: Env): Promise<Response> {
     if (offset % BLOB_PAGE_SIZE !== 0 || offset >= replayEnd || replayEnd !== session.next_blob_offset) {
       return errorResponse("Upload preparation is out of sequence", 409);
     }
-    let recorded: BlobUploadRequest[];
-    try {
-      const parsed: unknown = JSON.parse(session.missing_blobs_json);
-      if (!Array.isArray(parsed)) throw new Error();
-      recorded = parsed as BlobUploadRequest[];
-    } catch {
-      return errorResponse("Publish session is damaged", 500);
-    }
+    const recorded = readMissingBlobs(session, blobs);
+    if (!recorded) return errorResponse("Publish session is damaged", 500);
     const pageHashes = new Set(blobs.slice(offset, replayEnd).map((blob) => blob.sha512));
     return jsonResponse({
       missingBlobs: recorded.filter((blob) => pageHashes.has(blob.sha512)).map((blob) => blob.sha512),
@@ -584,17 +579,12 @@ async function prepareBlobPage(request: Request, env: Env): Promise<Response> {
     if (object && object.size !== blob.size) await env.BUCKET.delete(key);
     return object?.size === blob.size;
   }));
-  const newlyMissing = page.filter((_, index) => !checks[index]);
+  const newlyMissingIndexes = page.flatMap((_, index) => (checks[index] ? [] : [offset + index]));
+  const newlyMissing = newlyMissingIndexes.map((index) => blobs[index]);
   const alreadyStoredBytes = page.reduce((total, blob, index) => total + (checks[index] ? blob.size : 0), 0);
-  let previousMissing: BlobUploadRequest[];
-  try {
-    const parsed: unknown = JSON.parse(session.missing_blobs_json);
-    if (!Array.isArray(parsed)) throw new Error();
-    previousMissing = parsed as BlobUploadRequest[];
-  } catch {
-    return errorResponse("Publish session is damaged", 500);
-  }
-  const nextMissing = [...previousMissing, ...newlyMissing];
+  const previousMissing = parseMissingIndexes(session, blobs.length);
+  if (!previousMissing) return errorResponse("Publish session is damaged", 500);
+  const nextMissing = [...previousMissing, ...newlyMissingIndexes];
   const nextOffset = offset + page.length;
   const statements = [env.DB.prepare(`
     UPDATE publish_sessions

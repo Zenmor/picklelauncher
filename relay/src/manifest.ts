@@ -1,7 +1,7 @@
 import { isAllowedModrinthUrl, isSafeManifestPath, isValidPackId, isValidRevision, isValidSha512 } from "./validation.ts";
 
 const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_FILES = 5000;
+const MAX_FILES = 10_000;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_NAME_CHARS = 64;
