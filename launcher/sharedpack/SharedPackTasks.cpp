@@ -25,7 +25,7 @@ namespace SharedPack {
 namespace {
 
 const QString MinecraftUid = QStringLiteral("net.minecraft");
-constexpr int MaxParallelDownloads = 4;
+constexpr int MaxParallelDownloads = 8;
 
 QString typeName()
 {

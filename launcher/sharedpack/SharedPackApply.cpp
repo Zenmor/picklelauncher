@@ -181,6 +181,7 @@ State stateAfter(const State& oldState, const Plan& plan)
     State state = oldState;
     state.revision = plan.revision;
     state.installed = plan.installed;
+    state.changelog = plan.changelog;
     return state;
 }
 

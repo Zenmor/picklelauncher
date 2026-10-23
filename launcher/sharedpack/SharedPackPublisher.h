@@ -35,9 +35,12 @@ struct PublishJob {
 class Publisher : public QObject {
     Q_OBJECT
    public:
-    static constexpr int MaxConcurrentPuts = 3;
+    static constexpr int DefaultMaxConcurrentPuts = 3;
     static constexpr int MaxConcurrentHeads = 4;
     static constexpr int MaxAttempts = 3;
+
+    explicit Publisher(PublishTarget* target, HostConfig host, int maxConcurrentPuts = DefaultMaxConcurrentPuts, QObject* parent = nullptr);
+    ~Publisher() override;
 
     /// Pause before the next attempt of an operation whose attempt number \a attempt (from 0) just failed with \a status. A 5xx or no answer
     /// is usually a moment's trouble (the Worker's free-plan CPU limit answers 503 on about one call in fifty): one to three seconds. A 429
@@ -45,9 +48,6 @@ class Publisher : public QObject {
     static int retryDelayMs(int status, int attempt);
     /// Tests only: multiplies every retry pause (0 = try again at once). Not thread safe; set it before any publisher runs.
     static void setRetryDelayScale(double scale);
-
-    Publisher(PublishTarget* target, HostConfig host, QObject* parent = nullptr);
-    ~Publisher() override;
 
     /// Reads latest.json of \a token: nothing (ok, no revision) when the host has none. Answers through \a done.
     void readLatest(const QString& token, std::function<void(bool ok, std::optional<Latest> latest, const QString& error)> done);
@@ -87,6 +87,7 @@ class Publisher : public QObject {
 
     PublishTarget* m_target;
     HostConfig m_host;
+    int m_maxConcurrentPuts;
     bool m_busy = false;
     bool m_aborted = false;
     /// Operations waiting out a retry pause, with what to tell their caller if the publish is aborted meanwhile.

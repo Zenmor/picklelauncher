@@ -139,13 +139,14 @@ void OwnerSession::makePublisher(const HostConfig& host)
     retire(m_checker);
     m_host = host;
     registerSecrets(host);  // before the first request that could log an address or an error text
+    int maxPuts = (host.kind == HostConfig::Kind::Relay) ? Publisher::DefaultMaxConcurrentPuts : 10;
     if (host.kind == HostConfig::Kind::Folder)
         m_target = std::make_unique<FolderTarget>(host.folder);
     else if (host.kind == HostConfig::Kind::Relay)
         m_target = std::make_unique<RelayTarget>(host);
     else
         m_target = std::make_unique<S3Target>(host);
-    m_publisher = std::make_unique<Publisher>(m_target.get(), host);
+    m_publisher = std::make_unique<Publisher>(m_target.get(), host, maxPuts);
     m_checker = std::make_unique<UrlChecker>();
     connect(m_publisher.get(), &Publisher::planned, this, [this](const UploadPlan& plan) { m_lastPlan = plan; });
     connect(m_publisher.get(), &Publisher::progress, this, &OwnerSession::progress);

@@ -130,12 +130,17 @@ void SharedPackPage::startCheck(const SharedPack::Link& link)
     auto* check = new SharedPack::CheckTask(link.invite, *state);
     m_check = Task::Ptr(check);
     // Results of a check that was replaced meanwhile are ignored.
-    connect(check, &Task::succeeded, this, [this, check] {
+    connect(check, &Task::succeeded, this, [this, check, state] {
         if (m_check.get() != check)
             return;
         m_inst->setUpdateAvailable(check->updateAvailable());
         if (!check->updateAvailable()) {
-            ui->changelogTextBrowser->setPlainText(tr("This pack is up to date."));
+            if (!state->changelog.isEmpty()) {
+                ui->changelogTextBrowser->setPlainText(
+                    tr("This pack is up to date at revision %1.").arg(state->revision) + QStringLiteral("\n\n") + state->changelog);
+            } else {
+                ui->changelogTextBrowser->setPlainText(tr("This pack is up to date."));
+            }
             return;
         }
         m_manifest = *check->manifest();

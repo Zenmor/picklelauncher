@@ -310,7 +310,8 @@ class SharedPackTest : public QObject {
         add("too many files", mutated("files", many));
 
         QJsonArray big;  // each file is within its limit, together they are not
-        for (int i = 0; i < 9; ++i)
+        // 70 x 512 MB = 35 GB, exceeds MaxTotalSize (32 GB)
+        for (int i = 0; i < 70; ++i)
             big.append(QJsonObject{ { "path", QString("f/%1").arg(i) }, { "size", double(Limits::MaxFileSize) }, { "sha512", sha('a') } });
         add("total too big", mutated("files", big));
     }

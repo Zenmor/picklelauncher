@@ -50,6 +50,11 @@ class RelayTarget : public PublishTarget {
     /// Static so a test can check it without a network.
     static QByteArray beginPayload(const HostConfig& host, const PublishJob& job);
 
+    /// Checks a job against the relay's hard limits (Worker: 2 MiB request body, 8 MiB manifest, 10,000
+    /// blobs, 100 MB per file). Returns an empty string when the pack fits, otherwise a user-facing
+    /// message telling the owner to use their own host. Static so a test can check it without a network.
+    static QString relayRefusalReason(const PublishJob& job);
+
     /// Calls /publish/begin and pages through bounded missing-blob batches. Always
     /// calls done() from the event loop.
     void prepare(bool dryRun, std::function<void(bool ok, const QString& error)> done) override;

@@ -24,6 +24,9 @@ namespace SharedPack {
 namespace {
 
 constexpr qint64 SmallResponseLimit = 2 * 1024 * 1024;
+constexpr qint64 RequestBodyLimit = 2 * 1024 * 1024;
+constexpr qint64 MaxManifestBytesRelay = 8 * 1024 * 1024;
+constexpr int MaxBlobsRelay = 10000;
 
 /// Extracts a human-readable error from a Worker JSON response.
 QString describeWorkerStatus(int status, const QByteArray& body)
@@ -45,6 +48,40 @@ QJsonObject blobJson(const RelayTarget::BlobRequests::value_type& blob)
 }
 
 }  // namespace
+
+/// Checks whether a publish job exceeds the relay's hard limits. Returns an empty string if OK, otherwise a user-facing error message.
+QString RelayTarget::relayRefusalReason(const PublishJob& job)
+{
+    // The Worker's /publish/begin request body must stay under RequestBodyLimit (2 MiB).
+    const QByteArray payload = RelayTarget::beginPayload(HostConfig{}, job);
+    if (payload.size() >= RequestBodyLimit) {
+        return QStringLiteral("The Shared Packs server cannot carry this pack: the publish request would exceed the 2 MiB limit (%1 files, %2 MiB). Use your own host (S3 or a web-server folder) instead.")
+            .arg(job.manifest.files.size())
+            .arg(payload.size() / (1024 * 1024));
+    }
+    // The Worker caps the manifest at 8 MiB.
+    const qint64 manifestBytes = manifestToJson(job.manifest).size();
+    if (manifestBytes > MaxManifestBytesRelay) {
+        return QStringLiteral("The Shared Packs server cannot carry this pack: the manifest is %1 MiB (limit 8 MiB). Use your own host (S3 or a web-server folder) instead.")
+            .arg(manifestBytes / (1024 * 1024));
+    }
+    // The Worker caps the number of blobs (files without Modrinth URLs) at 10,000.
+    const int blobCount = RelayTarget::blobRequests(job).size();
+    if (blobCount > MaxBlobsRelay) {
+        return QStringLiteral("The Shared Packs server cannot carry this pack: it has %1 files that need their own copy on the server (limit 10,000). Use your own host (S3 or a web-server folder) instead.")
+            .arg(blobCount);
+    }
+    // Per-file limit (already checked later, but keep here for completeness).
+    constexpr qint64 MaxServerFileBytes = 100'000'000;
+    for (const auto& file : job.manifest.files) {
+        if (file.sha512.isEmpty() || !file.urls.isEmpty() || file.size <= MaxServerFileBytes)
+            continue;
+        return QStringLiteral("The Shared Packs server cannot carry this pack: %1 (%2 MB) is larger than 100 MB. Use your own host (S3 or a web-server folder) instead.")
+            .arg(file.path)
+            .arg(file.size / 1'000'000);
+    }
+    return {};
+}
 
 RelayTarget::RelayTarget(HostConfig host, QObject* parent)
     : PublishTarget(parent), m_host(std::move(host))
@@ -105,26 +142,15 @@ void RelayTarget::prepare(bool dryRun, std::function<void(bool ok, const QString
         return;
     }
 
-    // List only files that need an owned R2 blob; Modrinth URLs are fetched directly by members.
-    m_blobRequests = blobRequests(*m_job);
-
-    // The Worker refuses a file above this size with a vague "Invalid blob batch": name the files here, before anything is sent.
-    constexpr qint64 MaxServerFileBytes = 100'000'000;
-    QStringList tooBig;
-    int tooBigCount = 0;
-    for (const auto& file : m_job->manifest.files) {
-        if (file.sha512.isEmpty() || !file.urls.isEmpty() || file.size <= MaxServerFileBytes)
-            continue;
-        if (++tooBigCount <= 3)
-            tooBig.append(QStringLiteral("%1 (%2 MB)").arg(file.path).arg(file.size / 1'000'000));
-    }
-    if (tooBigCount > 0) {
-        QString message = QStringLiteral("The server accepts files up to 100 MB. Too big: %1").arg(tooBig.join(QStringLiteral(", ")));
-        if (tooBigCount > tooBig.size())
-            message += QStringLiteral(" and %1 more").arg(tooBigCount - tooBig.size());
-        QTimer::singleShot(0, this, [done, message] { done(false, message); });
+    // Refuse early if the pack exceeds the relay's hard limits.
+    const QString refusal = relayRefusalReason(*m_job);
+    if (!refusal.isEmpty()) {
+        QTimer::singleShot(0, this, [done, refusal] { done(false, refusal); });
         return;
     }
+
+    // List only files that need an owned R2 blob; Modrinth URLs are fetched directly by members.
+    m_blobRequests = blobRequests(*m_job);
 
     if (dryRun) {
         m_dryRun = true;

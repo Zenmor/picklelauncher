@@ -203,9 +203,10 @@ class SharedPackPublishTest : public QObject {
         QVERIFY(buildManifest(input));
 
         input.files.clear();
-        for (int i = 0; i < 9; ++i)
+        // 70 x 512 MB = 35 GB, exceeds MaxTotalSize (32 GB)
+        for (int i = 0; i < 70; ++i)
             input.files.append(file(QStringLiteral("mods/m%1.jar").arg(i), Limits::MaxFileSize, static_cast<char>('0' + i)));
-        QVERIFY(!buildManifest(input));  // 9 x 512 MB is more than 4 GB
+        QVERIFY(!buildManifest(input));
     }
 
     // ---------------------------------------------------------------- revision numbers

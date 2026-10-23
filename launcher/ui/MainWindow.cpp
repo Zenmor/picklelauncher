@@ -1672,9 +1672,27 @@ void MainWindow::instanceActivated(QModelIndex index)
 
 void MainWindow::on_actionLaunchInstance_triggered()
 {
-    if (m_selectedInstance && !m_selectedInstance->isRunning()) {
-        APPLICATION->launch(m_selectedInstance);
+    if (!m_selectedInstance)
+        return;
+
+    if (m_selectedInstance->isRunning()) {
+        // Show warning dialog like vanilla launcher
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle(tr("Game Already Running"));
+        msgBox.setText(tr("A game is already running. Do you want to start another one?"));
+        msgBox.setIcon(QMessageBox::Warning);
+
+        auto* playAnywayBtn = msgBox.addButton(tr("Play Anyway"), QMessageBox::YesRole);
+        auto* cancelBtn = msgBox.addButton(tr("Cancel"), QMessageBox::NoRole);
+        msgBox.setDefaultButton(cancelBtn);
+
+        msgBox.exec();
+
+        if (msgBox.clickedButton() != playAnywayBtn)
+            return;
     }
+
+    APPLICATION->launch(m_selectedInstance);
 }
 
 void MainWindow::activateInstance(BaseInstance* instance)

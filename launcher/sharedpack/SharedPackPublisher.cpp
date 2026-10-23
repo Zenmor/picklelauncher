@@ -43,7 +43,8 @@ Put::Kind kindOfKey(const QString& key)
 
 }  // namespace
 
-Publisher::Publisher(PublishTarget* target, HostConfig host, QObject* parent) : QObject(parent), m_target(target), m_host(std::move(host)) {}
+Publisher::Publisher(PublishTarget* target, HostConfig host, int maxConcurrentPuts, QObject* parent)
+    : QObject(parent), m_target(target), m_host(std::move(host)), m_maxConcurrentPuts(maxConcurrentPuts) {}
 
 Publisher::~Publisher()
 {
@@ -238,7 +239,7 @@ void Publisher::checkBlobs(const PublishJob& job, bool dryRun)
 void Publisher::runPlan(const UploadPlan& plan, std::function<Op(const Put&)> toOp, std::optional<int> baseline, bool recheck, QString token,
                         std::function<void()> whenDone)
 {
-    m_sequencer = std::make_unique<UploadSequencer>(plan, MaxConcurrentPuts);
+    m_sequencer = std::make_unique<UploadSequencer>(plan, m_maxConcurrentPuts);
     m_toOp = std::move(toOp);
     m_planDone = std::move(whenDone);
     m_baseline = baseline;

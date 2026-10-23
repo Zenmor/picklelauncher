@@ -90,6 +90,7 @@ Plan planUpdate(const State& state, const Manifest& next, const DiskState& disk)
 {
     Plan plan;
     plan.revision = next.revision;
+    plan.changelog = next.changelog;
     if (state.role == Role::Owner) {
         plan.refusal = Plan::Refusal::OwnerRole;
         return plan;

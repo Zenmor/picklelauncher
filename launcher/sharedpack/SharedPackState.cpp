@@ -85,6 +85,11 @@ Parsed<State> parseState(const QByteArray& json)
         state.installed.insert(path, it.value().toString());
     }
 
+    const QString changelog = object.value("changelog").toString();
+    if (changelog.size() > Limits::MaxChangelogChars)
+        return corrupt(QStringLiteral("changelog too long"));
+    state.changelog = changelog;
+
     Parsed<State> result;
     result.value = std::move(state);
     return result;
@@ -102,6 +107,8 @@ QByteArray stateToJson(const State& state)
     object.insert("role", state.role == Role::Owner ? QStringLiteral("owner") : QStringLiteral("member"));
     object.insert("revision", state.revision);
     object.insert("installed", installed);
+    if (!state.changelog.isEmpty())
+        object.insert("changelog", state.changelog);
     return QJsonDocument(object).toJson(QJsonDocument::Indented);
 }
 

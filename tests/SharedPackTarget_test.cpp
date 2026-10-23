@@ -603,7 +603,7 @@ class SharedPackTargetTest : public QObject {
         };
         Publisher second(&refusing, folderConfig(g.host.path()));
         QVERIFY(!publishAndWait(second, g.job(1, TokenA, std::nullopt)).first);
-        QVERIFY(refusing.refused <= Publisher::MaxConcurrentPuts);  // each in-flight blob was tried once
+        QVERIFY(refusing.refused <= Publisher::DefaultMaxConcurrentPuts);  // each in-flight blob was tried once
     }
 
     void failedPublishGivesTheHostSessionBack()
@@ -871,7 +871,7 @@ class SharedPackTargetTest : public QObject {
         QCOMPARE(blobs.at(1).toObject().value(QStringLiteral("size")).toInt(), 30);
     }
 
-    // The Worker accepts up to Limits::MaxFiles blobs in one begin, and the request must stay under its 2 MiB body cap.
+    // The Worker accepts up to 10,000 blobs in one begin (its MAX_FILES), and the request must stay under its 2 MiB body cap.
     void relayBeginForAMaximumPackFitsTheRequestLimit()
     {
         HostConfig host;
@@ -881,12 +881,120 @@ class SharedPackTargetTest : public QObject {
         job.token = TokenA;
         job.manifest.packId = QStringLiteral("Pack_begin_02");
         job.manifest.revision = 1;
-        for (int i = 0; i < Limits::MaxFiles; ++i)
+        constexpr int RelayMaxFiles = 10000;
+        for (int i = 0; i < RelayMaxFiles; ++i)
             job.manifest.files.append(File{ QStringLiteral("mods/m%1.jar").arg(i), 100'000'000, sha512Of(QByteArray::number(i)), {} });
 
         const QByteArray payload = RelayTarget::beginPayload(host, job);
-        QCOMPARE(QJsonDocument::fromJson(payload).object().value(QStringLiteral("blobs")).toArray().size(), Limits::MaxFiles);
+        QCOMPARE(QJsonDocument::fromJson(payload).object().value(QStringLiteral("blobs")).toArray().size(), RelayMaxFiles);
         QVERIFY2(payload.size() < 2 * 1024 * 1024, qPrintable(QString::number(payload.size())));
+    }
+
+    // ---------------------------------------------------------------- relay refusal (client-side, no network)
+    /// A Modrinth-backed file: it carries a sha (like the real build) plus public urls, so blobRequests skips it.
+    static File urlFile(const QString& path, int urlCount)
+    {
+        const QByteArray data = path.toUtf8();
+        File f{ path, qint64(data.size()), sha512Of(data), {} };
+        const QString base = QStringLiteral("https://cdn.modrinth.com/data/abcdefghijklmnopqrstuvwxyz/");
+        const QString longUrl = base + QString(2048 - base.size(), 'v');
+        for (int i = 0; i < urlCount; ++i)
+            f.urls.append(longUrl);
+        return f;
+    }
+
+    // More than the Worker's 10,000 blobs, but still under its 2 MiB body and 8 MiB manifest caps:
+    // the blob-count branch must be the one that fires.
+    void relayRefusesBlobsAboveTheWorkerLimit()
+    {
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_refuse_blobs");
+        job.manifest.revision = 1;
+        const QByteArray content("x");
+        const QString sha = sha512Of(content);
+        for (int i = 0; i < 10001; ++i)
+            job.manifest.files.append(File{ QStringLiteral("mods/m%1.jar").arg(i), qint64(100'000), sha, {} });
+
+        const QByteArray payload = RelayTarget::beginPayload(HostConfig{}, job);
+        QVERIFY2(payload.size() < 2 * 1024 * 1024, qPrintable(QString::number(payload.size())));  // stay in the blob branch
+        const QString error = RelayTarget::relayRefusalReason(job);
+        QVERIFY2(error.contains(QStringLiteral("10001")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("limit 10,000")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("your own host")), qPrintable(error));
+    }
+
+    // A begin request at or over the Worker's 2 MiB body cap: the payload branch fires (it is checked first).
+    void relayRefusesARequestAboveTwoMiB()
+    {
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_refuse_payload");
+        job.manifest.revision = 1;
+        const QByteArray content("x");
+        const QString sha = sha512Of(content);
+        for (int i = 0; i < 15000; ++i)
+            job.manifest.files.append(File{ QStringLiteral("mods/m%1.jar").arg(i), qint64(100'000'000), sha, {} });
+
+        const QByteArray payload = RelayTarget::beginPayload(HostConfig{}, job);
+        QVERIFY2(payload.size() >= 2 * 1024 * 1024, qPrintable(QString::number(payload.size())));
+        const QString error = RelayTarget::relayRefusalReason(job);
+        QVERIFY2(error.contains(QStringLiteral("2 MiB limit")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("15000")), qPrintable(error));
+    }
+
+    // A manifest over the Worker's 8 MiB cap, carried mostly by long Modrinth urls (so there are no blobs and the
+    // begin request stays tiny): the manifest branch fires.
+    void relayRefusesAManifestAboveEightMiB()
+    {
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_refuse_manifest");
+        job.manifest.revision = 1;
+        for (int i = 0; i < 1100; ++i)
+            job.manifest.files.append(urlFile(QStringLiteral("mods/m%1.jar").arg(i), 4));
+
+        const QByteArray payload = RelayTarget::beginPayload(HostConfig{}, job);
+        QVERIFY2(payload.size() < 2 * 1024 * 1024, qPrintable(QString::number(payload.size())));  // stay out of the payload branch
+        const QByteArray manifest = manifestToJson(job.manifest);
+        QVERIFY2(manifest.size() > 8 * 1024 * 1024, qPrintable(QString::number(manifest.size())));
+        const QString error = RelayTarget::relayRefusalReason(job);
+        QVERIFY2(error.contains(QStringLiteral("limit 8 MiB")), qPrintable(error));
+    }
+
+    // Exactly at every relay limit the pack must still be accepted (refuse only strictly beyond them): the
+    // off-by-one guard for all four branches at once.
+    void relayAcceptsAPackAtTheWorkerLimits()
+    {
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_refuse_edge");
+        job.manifest.revision = 1;
+        const QByteArray content("x");
+        const QString sha = sha512Of(content);
+        for (int i = 0; i < 10000; ++i)  // == 10,000 blobs (the limit), each exactly 100 MB (the per-file limit)
+            job.manifest.files.append(File{ QStringLiteral("mods/m%1.jar").arg(i), qint64(100'000'000), sha, {} });
+
+        // At every boundary (10,000 blobs, 100 MB per file, payload < 2 MiB, manifest < 8 MiB) nothing may refuse.
+        QVERIFY2(RelayTarget::relayRefusalReason(job).isEmpty(), qPrintable(RelayTarget::relayRefusalReason(job)));
+    }
+
+    // A single 200 MB file is over the relay's 100 MB per-file limit but under the protocol's 512 MiB ceiling, so the
+    // relay must refuse it while an S3 host would still take it. Only the per-file branch may fire.
+    void relayRefusesAFileS3StillAccepts()
+    {
+        PublishJob job;
+        job.token = TokenA;
+        job.manifest.packId = QStringLiteral("Pack_refuse_file");
+        job.manifest.revision = 1;
+        const QByteArray name = QStringLiteral("mods/big.jar").toUtf8();
+        job.manifest.files.append(File{ QStringLiteral("mods/big.jar"), qint64(200'000'000), sha512Of(name), {} });
+
+        // 200 MB is fine for the protocol (S3) but over the relay's 100 MB.
+        QVERIFY(qint64(200'000'000) <= Limits::MaxFileSize);
+        const QString error = RelayTarget::relayRefusalReason(job);
+        QVERIFY2(error.contains(QStringLiteral("larger than 100 MB")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("mods/big.jar")), qPrintable(error));
     }
 };
 

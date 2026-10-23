@@ -15,12 +15,12 @@ namespace SharedPack {
 constexpr int FormatVersion = 1;
 
 namespace Limits {
-constexpr qint64 MaxManifestBytes = 8 * 1024 * 1024;
+constexpr qint64 MaxManifestBytes = 64LL * 1024 * 1024;
 constexpr qint64 MaxLatestBytes = 4 * 1024;
-constexpr int MaxFiles = 10000;
-constexpr int MaxReleased = 1000;
+constexpr int MaxFiles = 100000;
+constexpr int MaxReleased = 10000;
 constexpr qint64 MaxFileSize = 512LL * 1024 * 1024;
-constexpr qint64 MaxTotalSize = 4LL * 1024 * 1024 * 1024;
+constexpr qint64 MaxTotalSize = 32LL * 1024 * 1024 * 1024;
 constexpr int MaxUrlsPerFile = 4;
 constexpr int MaxUrlChars = 2048;
 constexpr int MaxNameChars = 64;

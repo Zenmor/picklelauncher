@@ -1526,6 +1526,7 @@ bool Application::launch(BaseInstance* instance,
 {
     if (m_updateRunning) {
         qDebug() << "Cannot launch instances while an update is running. Please try again when updates are completed.";
+        return false;
     } else if (instance->canLaunch()) {
         QMutexLocker locker(&m_instanceExtrasMutex);
         auto& extras = m_instanceExtras[instance->id()];
@@ -1551,9 +1552,6 @@ bool Application::launch(BaseInstance* instance,
         connect(controller.get(), &LaunchController::finished, this, &Application::controllerFinished);
         addRunningInstance();
         QMetaObject::invokeMethod(controller.get(), &Task::start, Qt::QueuedConnection);
-        return true;
-    } else if (instance->isRunning()) {
-        showInstanceWindow(instance, "console");
         return true;
     } else if (instance->canEdit()) {
         showInstanceWindow(instance);

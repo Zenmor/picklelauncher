@@ -72,6 +72,7 @@ struct Plan {
     int revision = 0;                  ///< the revision this plan installs
     QList<Action> actions;             ///< deletes first (deepest first), then everything else by path
     QMap<QString, QString> installed;  ///< State::installed once every action succeeded
+    QString changelog;                 ///< the changelog of the new revision (copied from the manifest)
 
     explicit operator bool() const { return refusal == Refusal::None; }
 };

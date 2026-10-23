@@ -22,6 +22,7 @@ struct State {
     Role role = Role::Member;
     int revision = 0;                  ///< installed revision, 0 = nothing installed yet
     QMap<QString, QString> installed;  ///< path -> sha512 of the pack's version of the file as of the last update
+    QString changelog;                 ///< the changelog of the installed revision (empty for old state files)
 };
 
 /// The file is local, but it can be edited or copied between machines, so it is validated like a manifest (paths included: they are used
